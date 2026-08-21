@@ -1,10 +1,12 @@
 
 
 const urls = [
-  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/AOC/gt.mp4",
-  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/Ting/gt.mp4",
-  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/tianxiaasan/gt.mp4",
-  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/monalisa/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l2/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l3/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l4/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l5/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l7/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l8/gt.mp4",
 ];
 
 async function check() {
