@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Avatar Video Training Tool</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Custom Styling for Scrollbar and Glassmorphism -->
+  <style>
+    /* Custom scrollbar for console */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.3);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.5);
+    }
+  </style>
+</head>
+<body class="flex flex-col min-h-full font-sans antialiased">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-md sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-violet-600 to-fuchsia-600 flex items-center justify-center shadow-lg shadow-violet-500/20">
+          <svg class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">AI Video Training Tool</h1>
+          <p class="text-xs text-slate-500 font-medium">Text-to-Speech & LatentSync Lip-Sync Generator</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2">
+        <span class="inline-flex items-center rounded-md bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
+          Powered by Replicate
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col lg:flex-row gap-8">
+    
+    <!-- Left Panel: Configuration Form -->
+    <section class="w-full lg:w-5/12 flex flex-col space-y-6">
+      <div class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-xl shadow-xl flex flex-col space-y-5">
+        <h2 class="text-lg font-semibold border-b border-slate-800 pb-3 flex items-center space-x-2 text-violet-400">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
+          <span>Generator Settings</span>
+        </h2>
+
+        <form id="generatorForm" class="space-y-4">
+          <!-- Replicate API Token Overwrite -->
+          <div>
+            <label for="customToken" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex justify-between">
+              <span>Replicate API Token</span>
+              <span class="text-[10px] text-slate-500 font-normal lowercase">(Optional: Overrides .env key)</span>
+            </label>
+            <input type="password" id="customToken" name="customToken" 
+              placeholder="r8_..." 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200" />
+          </div>
+
+          <!-- Text Script -->
+          <div>
+            <label for="text" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Script Text
+            </label>
+            <textarea id="text" name="text" rows="4" required
+              placeholder="Enter the speech script for your training video. Keep it clear and punchy for the best lip-sync results..." 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200 resize-none"></textarea>
+          </div>
+
+          <!-- Voice Selection -->
+          <div>
+            <label for="voice" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Voice Model (Kokoro TTS)
+            </label>
+            <select id="voice" name="voice" 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
+              <optgroup label="American English - Female">
+                <option value="af_bella" selected>Bella (American Female - Default)</option>
+                <option value="af_heart">Heart (American Female - Expressive)</option>
+                <option value="af_nicole">Nicole (American Female)</option>
+                <option value="af_sky">Sky (American Female)</option>
+              </optgroup>
+              <optgroup label="British English - Female">
+                <option value="bf_alice">Alice (British Female - Refined)</option>
+                <option value="bf_emma">Emma (British Female - Warm)</option>
+                <option value="bf_isabella">Isabella (British Female - Clear)</option>
+                <option value="bf_lily">Lily (British Female - Gentle)</option>
+              </optgroup>
+              <optgroup label="American English - Male">
+                <option value="am_michael">Michael (American Male)</option>
+                <option value="am_adam">Adam (American Male)</option>
+              </optgroup>
+              <optgroup label="British English - Male">
+                <option value="bm_daniel">Daniel (British Male - Polished)</option>
+                <option value="bm_fable">Fable (British Male - Storytelling)</option>
+                <option value="bm_george">George (British Male - Classic)</option>
+                <option value="bm_lewis">Lewis (British Male - Modern)</option>
+              </optgroup>
+              <optgroup label="Other Languages">
+                <option value="jf_alpha">Alpha (Japanese Female)</option>
+                <option value="zf_xiaoxiao">Xiaoxiao (Mandarin Chinese Female)</option>
+                <option value="es_female">Spanish Female</option>
+                <option value="fr_female">French Female</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- Avatar Video Selection Type -->
+          <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+              Avatar Video Source
+            </label>
+            <div class="grid grid-cols-3 gap-2 p-1 bg-slate-950/80 border border-slate-800/80 rounded-xl">
+              <label class="cursor-pointer">
+                <input type="radio" name="avatarType" value="preset" checked class="sr-only peer" />
+                <div class="py-2 text-center text-xs font-medium text-slate-500 rounded-lg hover:text-slate-300 peer-checked:bg-slate-900 peer-checked:text-violet-400 peer-checked:shadow transition-all duration-150">
+                  Preset
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="avatarType" value="url" class="sr-only peer" />
+                <div class="py-2 text-center text-xs font-medium text-slate-500 rounded-lg hover:text-slate-300 peer-checked:bg-slate-900 peer-checked:text-violet-400 peer-checked:shadow transition-all duration-150">
+                  Video URL
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="avatarType" value="upload" class="sr-only peer" />
+                <div class="py-2 text-center text-xs font-medium text-slate-500 rounded-lg hover:text-slate-300 peer-checked:bg-slate-900 peer-checked:text-violet-400 peer-checked:shadow transition-all duration-150">
+                  Upload File
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Conditional Input: Preset Avatar Selection -->
+          <div id="avatarPresetContainer">
+            <label for="avatarPreset" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Select Preset Avatar
+            </label>
+            <select id="avatarPreset" name="avatarPreset" 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
+              <option value="preset_female_1" selected>Preset Female 1 (Professional - demo1_video)</option>
+              <option value="preset_male_1">Preset Male 1 (Professional - demo2_video)</option>
+              <option value="preset_female_2">Preset Female 2 (Casual - demo3_video)</option>
+            </select>
+            <!-- Preset Avatar Preview Player -->
+            <div id="presetPreviewContainer" class="mt-3 border border-slate-800 rounded-xl overflow-hidden aspect-video bg-slate-950 flex items-center justify-center relative">
+              <video id="presetPreviewVideo" autoplay muted loop playsinline class="w-full h-full object-contain">
+                <source id="presetPreviewSource" src="https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo1_video.mp4" type="video/mp4">
+                Your browser does not support the video tag.
+              </video>
+              <span class="absolute top-2 left-2 px-2 py-0.5 bg-slate-900/80 border border-slate-800 rounded text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                Avatar Preview
+              </span>
+            </div>
+          </div>
+
+          <!-- Conditional Input: Custom Video URL -->
+          <div id="avatarUrlContainer" class="hidden">
+            <label for="avatarUrl" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Avatar Video URL (Direct MP4 URL)
+            </label>
+            <input type="url" id="avatarUrl" name="avatarUrl" 
+              placeholder="https://example.com/talking-head.mp4" 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200" />
+          </div>
+
+          <!-- Conditional Input: Upload File -->
+          <div id="avatarUploadContainer" class="hidden">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Upload Front-facing Talking Head Video
+            </label>
+            <div class="relative group border border-dashed border-slate-800 hover:border-violet-500/80 bg-slate-950/50 rounded-xl p-4 transition-all duration-200 flex flex-col items-center justify-center">
+              <svg class="h-8 w-8 text-slate-600 group-hover:text-violet-400 mb-2 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <span class="text-xs text-slate-400 font-medium group-hover:text-slate-300" id="uploadFilename">Click to select MP4 video</span>
+              <span class="text-[10px] text-slate-600 mt-1">Maximum size: 100MB</span>
+              <input type="file" id="avatarFile" name="avatarFile" accept="video/mp4" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+            </div>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" id="generateBtn"
+            class="w-full py-3 px-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-violet-950/20 hover:shadow-violet-500/10 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2">
+            <span>Generate Training Video</span>
+            <svg class="h-4 w-4 animate-spin hidden" id="spinner" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1021 12h-1.5" />
+            </svg>
+          </button>
+        </form>
+      </div>
+
+      <!-- Quick Info / Help card -->
+      <div class="bg-slate-900/30 border border-slate-800/60 rounded-2xl p-5 flex items-start space-x-3 text-xs text-slate-400">
+        <svg class="h-5 w-5 text-violet-500/80 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div class="space-y-1">
+          <p class="font-semibold text-slate-300">Tips for Best Lip-Sync Results:</p>
+          <ul class="list-disc pl-4 space-y-1 text-slate-500">
+            <li>Ensure the avatar faces forward with their mouth closed at the start.</li>
+            <li>Avoid videos with background music, excessive movement, or multiple faces.</li>
+            <li>Keep the text duration somewhat consistent with the video duration (videos will lip-sync to the audio length).</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Panel: Logs, Output, and Results -->
+    <section class="w-full lg:w-7/12 flex flex-col space-y-6">
+      
+      <!-- Video Output Container -->
+      <div id="resultContainer" class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-xl shadow-xl flex flex-col items-center justify-center min-h-[300px] transition-all duration-300 relative overflow-hidden">
+        
+        <!-- Empty / Idle State -->
+        <div id="idleState" class="flex flex-col items-center justify-center text-center p-8 space-y-4">
+          <div class="h-16 w-16 rounded-2xl bg-slate-950/60 border border-slate-800 flex items-center justify-center text-slate-700">
+            <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          </div>
+          <div>
+            <h3 class="font-semibold text-slate-300 text-sm">No Video Generated</h3>
+            <p class="text-xs text-slate-500 max-w-sm mt-1">Fill out the generator settings on the left and click generate to begin the creation pipeline.</p>
+          </div>
+        </div>
+
+        <!-- Progress State -->
+        <div id="progressState" class="hidden w-full flex flex-col items-center justify-center p-8 space-y-6">
+          <div class="relative flex items-center justify-center">
+            <!-- Pulsing outer circle -->
+            <div class="absolute h-24 w-24 rounded-full bg-violet-600/10 border border-violet-500/20 animate-ping"></div>
+            <!-- Rotating loader -->
+            <div class="h-16 w-16 rounded-full border-4 border-slate-800 border-t-violet-500 animate-spin"></div>
+          </div>
+          <div class="text-center space-y-2">
+            <h3 class="font-bold text-slate-200 text-sm tracking-wide uppercase" id="currentStepTitle">Processing Pipeline...</h3>
+            <p class="text-xs text-slate-500 max-w-xs" id="currentStepDetail">Sending audio generation request to Replicate...</p>
+          </div>
+          <!-- Progress bar -->
+          <div class="w-full max-w-xs bg-slate-950 border border-slate-800/80 rounded-full h-2 overflow-hidden">
+            <div id="progressBar" class="bg-violet-500 h-full rounded-full w-0 transition-all duration-300"></div>
+          </div>
+        </div>
+
+        <!-- Success / Active Playback State -->
+        <div id="successState" class="hidden w-full flex flex-col space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-violet-400 flex items-center space-x-2">
+              <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 shadow shadow-emerald-400/50"></span>
+              <span>Generated Training Video</span>
+            </h3>
+            <div class="flex space-x-2">
+              <a id="downloadBtn" href="#" download="avatar_training_video.mp4"
+                class="inline-flex items-center px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs font-semibold text-slate-300 hover:text-white hover:border-violet-500 hover:bg-slate-900 transition-all duration-150">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download
+              </a>
+              <a id="rawLinkBtn" href="#" target="_blank"
+                class="inline-flex items-center px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition-all duration-150">
+                Open URL
+              </a>
+            </div>
+          </div>
+
+          <!-- Video display -->
+          <div class="w-full bg-slate-950 border border-slate-800/80 rounded-xl overflow-hidden aspect-video flex items-center justify-center">
+            <video id="outputVideoPlayer" controls class="w-full h-full object-contain">
+              <source id="videoSource" src="" type="video/mp4">
+              Your browser does not support the video tag.
+            </video>
+          </div>
+
+          <!-- Debug Audio Link -->
+          <div id="audioLinkContainer" class="flex justify-between items-center text-xs text-slate-500 px-1">
+            <span>Generated Audio Track:</span>
+            <a id="rawAudioLink" href="#" target="_blank" class="text-violet-400 hover:underline">Listen to Audio</a>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Logging Console -->
+      <div class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-xl shadow-xl flex flex-col space-y-3">
+        <h3 class="text-sm font-semibold text-slate-400 flex items-center justify-between">
+          <span class="flex items-center space-x-2">
+            <svg class="h-4.5 w-4.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span>Activity Logs</span>
+          </span>
+          <button id="clearLogsBtn" class="text-xs text-slate-600 hover:text-slate-400 font-medium">Clear</button>
+        </h3>
+        <!-- Console Window -->
+        <div id="consoleLogs" class="w-full bg-slate-950/80 border border-slate-900/80 rounded-xl p-4 font-mono text-[11px] leading-relaxed text-slate-500 h-[150px] overflow-y-auto space-y-1.5 shadow-inner">
+          <div class="text-slate-600">// Waiting for generation pipeline to start...</div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-900/80 py-4 bg-slate-950/40 text-center text-xs text-slate-600 font-medium">
+    <div class="max-w-7xl mx-auto px-4">
+      AI Avatar Video Training Tool &copy; 2026. Made with Replicate APIs (Kokoro-82M & LatentSync).
+    </div>
+  </footer>
+
+  <!-- App Logic script -->
+  <script src="app.js"></script>
+</body>
+</html>
