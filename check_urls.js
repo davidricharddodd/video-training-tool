@@ -1,15 +1,10 @@
 
 
 const urls = [
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo1_video.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo2_video.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo3_video.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo4_video.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo5_video.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo1_input.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo2_input.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo3_input.mp4",
-  "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo4_input.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/AOC/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/Ting/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/tianxiaasan/gt.mp4",
+  "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/monalisa/gt.mp4",
 ];
 
 async function check() {
