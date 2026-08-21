@@ -184,73 +184,100 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      logMessage(`Step 1/2: Triggering Kokoro-82M TTS model...`);
+      logMessage(`Submitting generation request to server...`);
       
-      // We start a background timer to update progress text during wait
-      let progressTimer = setTimeout(() => {
-        updateProgress("Generating Speech Audio", "Processing text segments. Generating natural voice curves...", 50);
-      }, 5000);
-
       const response = await fetch("/api/generate", {
         method: "POST",
         body: formData
       });
 
-      clearTimeout(progressTimer);
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || "Generation pipeline failed on server.");
+        throw new Error(data.error || "Failed to initiate generation pipeline.");
       }
 
-      logMessage(`Speech audio track generated successfully.`, "success");
-      logMessage(`Audio Link: ${data.audioUrl}`);
+      const jobId = data.jobId;
+      logMessage(`Generation job initiated successfully. Job ID: ${jobId}`);
+      logMessage(`Step 1/2: Triggering Kokoro-82M TTS model...`);
+      updateProgress("Generating Speech Audio", "Requesting text-to-speech from Replicate...", 30);
 
-      // Progress Step 2: Lip Syncing
-      updateProgress("Synchronizing Lips (LatentSync)", "Applying facial audio-conditioned diffusion. This may take up to 2-3 minutes...", 75);
-      logMessage(`Step 2/2: Starting LatentSync lip-sync model on Replicate...`);
+      // Start polling the job status
+      let lastStep = "init";
+      const pollInterval = setInterval(async () => {
+        try {
+          const pollResponse = await fetch(`/api/jobs/${jobId}`);
+          if (!pollResponse.ok) {
+            throw new Error(`Failed to contact server (Status: ${pollResponse.status})`);
+          }
+          const pollData = await pollResponse.json();
+          if (!pollData.success) {
+            throw new Error(pollData.error || "Job status check failed.");
+          }
+          
+          const job = pollData.job;
+          
+          if (job.status === "processing") {
+            if (job.step !== lastStep) {
+              lastStep = job.step;
+              if (job.step === "tts") {
+                updateProgress("Generating Speech Audio", "Processing text segments. Generating natural voice curves...", 40);
+              } else if (job.step === "latentsync") {
+                logMessage(`Step 1/2 complete. Speech audio generated.`, "success");
+                logMessage(`Step 2/2: Starting LatentSync lip-sync model on Replicate...`);
+                logMessage(`This process takes 1-3 minutes. Checking progress...`);
+                updateProgress("Synchronizing Lips (LatentSync)", "Applying facial audio-conditioned diffusion. This may take up to 2-3 minutes...", 70);
+              }
+            } else if (job.step === "latentsync") {
+              // Periodically update the progress bar to show activity during lip sync
+              updateProgress("Synchronizing Lips (LatentSync)", "Generating facial expression changes in latent space...", 85);
+            }
+          } else if (job.status === "completed") {
+            clearInterval(pollInterval);
+            
+            logMessage(`Audio generated successfully.`, "success");
+            logMessage(`Audio Link: ${job.audioUrl}`);
+            logMessage(`Avatar training video created successfully!`, "success");
+            logMessage(`Output Video URL: ${job.videoUrl}`);
+            
+            updateProgress("Complete", "Rendering final video...", 100);
 
-      // Mock update to keep user engaged during LatentSync generation (which takes a little longer)
-      let lipSyncTimer1 = setTimeout(() => {
-        updateProgress("Synchronizing Lips (LatentSync)", "Running Whisper audio extractor and temporal layers...", 85);
-        logMessage("LatentSync pipeline: Extracting Whisper audio embeddings...");
-      }, 10000);
+            // Load video in player
+            videoSource.src = job.videoUrl;
+            outputVideoPlayer.load();
+            
+            // Update download and link URLs
+            downloadBtn.href = job.videoUrl;
+            rawLinkBtn.href = job.videoUrl;
+            rawAudioLink.href = job.audioUrl;
 
-      let lipSyncTimer2 = setTimeout(() => {
-        updateProgress("Synchronizing Lips (LatentSync)", "Generating facial expression changes in latent space...", 95);
-        logMessage("LatentSync pipeline: Generating temporal mouth frames...");
-      }, 30000);
-
-      // We complete the request
-      const finalVideoUrl = data.videoUrl;
-      clearTimeout(lipSyncTimer1);
-      clearTimeout(lipSyncTimer2);
-
-      // Done! Displaying results
-      updateProgress("Complete", "Rendering final video...", 100);
-      logMessage(`Avatar training video created successfully!`, "success");
-      logMessage(`Output Video URL: ${finalVideoUrl}`);
-
-      // Load video in player
-      videoSource.src = finalVideoUrl;
-      outputVideoPlayer.load();
-      
-      // Update download and link URLs
-      downloadBtn.href = finalVideoUrl;
-      rawLinkBtn.href = finalVideoUrl;
-      rawAudioLink.href = data.audioUrl;
-
-      // Switch to success view
-      progressState.classList.add("hidden");
-      successState.classList.remove("hidden");
+            // Switch to success view
+            progressState.classList.add("hidden");
+            successState.classList.remove("hidden");
+            
+            // Re-enable form
+            generateBtn.disabled = false;
+            spinner.classList.add("hidden");
+          } else if (job.status === "failed") {
+            clearInterval(pollInterval);
+            throw new Error(job.error || "Generation failed on server.");
+          }
+        } catch (pollErr) {
+          clearInterval(pollInterval);
+          console.error(pollErr);
+          logMessage(`Polling error: ${pollErr.message}`, "error");
+          alert(`Pipeline Failed: ${pollErr.message}`);
+          resetUI();
+          generateBtn.disabled = false;
+          spinner.classList.add("hidden");
+        }
+      }, 3000);
 
     } catch (err) {
       console.error(err);
       logMessage(`Generation error: ${err.message}`, "error");
       alert(`Pipeline Failed: ${err.message}`);
       resetUI();
-    } finally {
-      // Re-enable form
       generateBtn.disabled = false;
       spinner.classList.add("hidden");
     }

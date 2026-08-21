@@ -17,6 +17,9 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static frontend files from 'public' directory
 app.use(express.static("public"));
 
+// In-memory job status store
+const jobs = new Map();
+
 // Configure Multer memory storage for custom avatar uploads
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -88,53 +91,118 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
       videoInput = presetUrls[avatarPreset] || presetUrls.preset_female_1;
     }
 
-    console.log(`[1/2] Generating audio via Kokoro-82M TTS...`);
-    // Step 1: Run Kokoro TTS to generate speech audio
-    // Model version pinned to stable: alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5
-    const audioOutput = await replicate.run(
-      "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
-      {
-        input: {
-          text: text,
-          voice: voice || "af_bella",
-          speed: 1.0,
-        },
-      }
-    );
+    // Generate jobId
+    const jobId = Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 
-    // Audio output is a FileOutput from Replicate. We cast to string to get its URL.
-    const audioUrl = audioOutput.toString();
-    console.log(`[1/2] Audio generation complete. Audio URL: ${audioUrl}`);
-
-    console.log(`[2/2] Generating lip-sync video via LatentSync...`);
-    // Step 2: Run LatentSync lip-sync model
-    // Model version pinned to stable: bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293
-    const videoOutput = await replicate.run(
-      "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
-      {
-        input: {
-          video: videoInput,
-          audio: audioUrl,
-        },
-      }
-    );
-
-    const videoUrl = videoOutput.toString();
-    console.log(`[2/2] Video generation complete. Video URL: ${videoUrl}`);
-
-    return res.status(200).json({
-      success: true,
-      audioUrl: audioUrl,
-      videoUrl: videoUrl,
+    // Initialize job status
+    jobs.set(jobId, {
+      status: "processing",
+      step: "tts",
+      progress: 30,
+      audioUrl: null,
+      videoUrl: null,
+      error: null
     });
 
+    // Automatically clean up job after 1 hour to prevent memory leaks
+    setTimeout(() => {
+      jobs.delete(jobId);
+    }, 60 * 60 * 1000);
+
+    // Respond immediately with the jobId
+    res.status(200).json({
+      success: true,
+      jobId: jobId
+    });
+
+    // Run the generation pipeline asynchronously in the background
+    (async () => {
+      try {
+        console.log(`[Job ${jobId}] Step 1/2: Generating audio via Kokoro-82M TTS...`);
+        const audioOutput = await replicate.run(
+          "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
+          {
+            input: {
+              text: text,
+              voice: voice || "af_bella",
+              speed: 1.0,
+            },
+          }
+        );
+
+        const audioUrl = audioOutput.toString();
+        console.log(`[Job ${jobId}] Step 1/2 complete. Audio URL: ${audioUrl}`);
+
+        // Update job status to latentsync step
+        jobs.set(jobId, {
+          status: "processing",
+          step: "latentsync",
+          progress: 70,
+          audioUrl: audioUrl,
+          videoUrl: null,
+          error: null
+        });
+
+        console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
+        const videoOutput = await replicate.run(
+          "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
+          {
+            input: {
+              video: videoInput,
+              audio: audioUrl,
+            },
+          }
+        );
+
+        const videoUrl = videoOutput.toString();
+        console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+
+        // Update job to completed status
+        jobs.set(jobId, {
+          status: "completed",
+          step: "done",
+          progress: 100,
+          audioUrl: audioUrl,
+          videoUrl: videoUrl,
+          error: null
+        });
+
+      } catch (error) {
+        console.error(`[Job ${jobId}] Pipeline failed:`, error);
+        jobs.set(jobId, {
+          status: "failed",
+          step: "error",
+          progress: 0,
+          audioUrl: null,
+          videoUrl: null,
+          error: error.message || "Generation failed."
+        });
+      }
+    })();
+
   } catch (error) {
-    console.error("Pipeline generation failed:", error);
+    console.error("Pipeline generation failed initiation:", error);
     return res.status(500).json({
       success: false,
       error: error.message || "An unexpected error occurred during the video generation process.",
     });
   }
+});
+
+// Get job status endpoint
+app.get("/api/jobs/:id", (req, res) => {
+  const jobId = req.params.id;
+  const job = jobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      error: "Job not found or expired.",
+    });
+  }
+  return res.status(200).json({
+    success: true,
+    job: job
+  });
 });
 
 // Start the server
