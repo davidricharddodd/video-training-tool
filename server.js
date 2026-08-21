@@ -3,6 +3,13 @@ import cors from "cors";
 import dotenv from "dotenv";
 import multer from "multer";
 import Replicate from "replicate";
+import { exec } from "child_process";
+import { promisify } from "util";
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+const execPromise = promisify(exec);
 
 dotenv.config();
 
@@ -28,7 +35,52 @@ const upload = multer({
   },
 });
 
-// Main generate endpoint
+// Helper to get media duration using ffprobe
+async function getDuration(mediaPath) {
+  const { stdout } = await execPromise(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${mediaPath}"`
+  );
+  return parseFloat(stdout.trim());
+}
+
+// Helper to loop video if it is shorter than target audio
+async function loopVideoIfNeeded(videoSource, targetDuration) {
+  const duration = await getDuration(videoSource);
+  console.log(`[Video Prep] Video duration: ${duration}s, Target audio duration: ${targetDuration}s`);
+  
+  if (targetDuration <= duration) {
+    console.log(`[Video Prep] Video is long enough. No looping needed.`);
+    return videoSource;
+  }
+
+  const N = Math.ceil(targetDuration / duration) - 1;
+  console.log(`[Video Prep] Looping video ${N} times to match target duration...`);
+
+  const tempOutputDir = os.tmpdir();
+  const tempOutputFile = path.join(tempOutputDir, `looped_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
+  
+  await execPromise(
+    `ffmpeg -y -stream_loop ${N} -i "${videoSource}" -c copy "${tempOutputFile}"`
+  );
+  
+  console.log(`[Video Prep] Loop complete. Temporary file: ${tempOutputFile}`);
+  return tempOutputFile;
+}
+
+// Helper to clean up temporary files
+function cleanUpTempFiles(paths) {
+  for (const filePath of paths) {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`[Cleanup] Deleted temporary file: ${filePath}`);
+      }
+    } catch (err) {
+      console.error(`[Cleanup] Failed to delete file: ${filePath}`, err);
+    }
+  }
+}
+
 app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
   try {
     const { text, voice, avatarType, avatarPreset, avatarUrl, customToken } = req.body;
@@ -52,8 +104,10 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
     // Initialize Replicate client dynamically for this request
     const replicate = new Replicate({ auth: apiToken });
 
-    // 2. Resolve Avatar Video input
-    let videoInput;
+    // 2. Resolve Initial Avatar Video source
+    let rawVideoPath;
+    let tempFilesToCleanup = [];
+
     if (avatarType === "upload") {
       if (!req.file) {
         return res.status(400).json({
@@ -61,8 +115,12 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
           error: "Avatar video file upload is selected, but no file was uploaded.",
         });
       }
-      // Pass the uploaded file as a Buffer (the Replicate Node client handles uploading this automatically)
-      videoInput = req.file.buffer;
+      // Save uploaded buffer to a temporary file for ffmpeg processing
+      const tempUploadDir = os.tmpdir();
+      const tempUploadPath = path.join(tempUploadDir, `upload_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`);
+      fs.writeFileSync(tempUploadPath, req.file.buffer);
+      rawVideoPath = tempUploadPath;
+      tempFilesToCleanup.push(tempUploadPath);
     } else if (avatarType === "url") {
       if (!avatarUrl || avatarUrl.trim() === "") {
         return res.status(400).json({
@@ -70,7 +128,7 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
           error: "Custom video URL is selected, but no URL was provided.",
         });
       }
-      videoInput = avatarUrl;
+      rawVideoPath = avatarUrl;
     } else {
       // Preset Selection
       const presetUrls = {
@@ -88,7 +146,7 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
         preset_speaker_11: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/15/gt.mp4",
         preset_speaker_12: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l5/gt.mp4"
       };
-      videoInput = presetUrls[avatarPreset] || presetUrls.preset_female_1;
+      rawVideoPath = presetUrls[avatarPreset] || presetUrls.preset_female_1;
     }
 
     // Generate jobId
@@ -143,12 +201,26 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
           error: null
         });
 
+        // 3. Process video duration looping to prevent cutoff
+        console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
+        const audioDuration = await getDuration(audioUrl);
+        const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
+
+        let finalVideoInput;
+        // If the processed path is a remote URL, we can pass it directly. Otherwise read local temp file as Buffer.
+        if (processedVideoPath.startsWith("http://") || processedVideoPath.startsWith("https://")) {
+          finalVideoInput = processedVideoPath;
+        } else {
+          finalVideoInput = fs.readFileSync(processedVideoPath);
+          tempFilesToCleanup.push(processedVideoPath); // Queue for cleanup
+        }
+
         console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
         const videoOutput = await replicate.run(
           "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
           {
             input: {
-              video: videoInput,
+              video: finalVideoInput,
               audio: audioUrl,
             },
           }
@@ -156,6 +228,9 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
 
         const videoUrl = videoOutput.toString();
         console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+
+        // Cleanup temporary files
+        cleanUpTempFiles(tempFilesToCleanup);
 
         // Update job to completed status
         jobs.set(jobId, {
@@ -169,6 +244,7 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
 
       } catch (error) {
         console.error(`[Job ${jobId}] Pipeline failed:`, error);
+        cleanUpTempFiles(tempFilesToCleanup);
         jobs.set(jobId, {
           status: "failed",
           step: "error",
