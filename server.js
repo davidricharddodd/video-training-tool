@@ -232,6 +232,35 @@ function splitTextIntoChunks(text, maxChars = 250) {
   return finalParts;
 }
 
+// Helper to run Replicate prediction with automatic rate-limit retry pacing
+async function runWithRetry(replicate, model, options, retries = 6, delay = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await replicate.run(model, options);
+    } catch (err) {
+      const errStr = err.message || "";
+      const isRateLimit = errStr.includes("429") || 
+                          errStr.includes("throttled") || 
+                          errStr.includes("rate limit") ||
+                          errStr.includes("Requests");
+      
+      if (isRateLimit && i < retries - 1) {
+        let waitTime = delay;
+        const match = errStr.match(/retry_after":\s*(\d+)/) || 
+                      errStr.match(/retry-after:\s*(\d+)/) || 
+                      errStr.match(/in\s*~(\d+)s/);
+        if (match) {
+          waitTime = (parseInt(match[1]) * 1000) + 1000; // convert to ms + 1s safety buffer
+        }
+        console.warn(`[Rate Limit] Hit 429 rate limit. Retrying in ${waitTime}ms... (Attempt ${i + 1}/${retries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 // Route 1: Generate Audio Preview (supporting custom [pause X.X] markers and long-form scripts)
 app.post("/api/generate-audio", async (req, res) => {
   try {
@@ -257,8 +286,8 @@ app.post("/api/generate-audio", async (req, res) => {
     const resolvedLang = getLanguageCode(voice);
     console.log(`[Audio Generation] Resolved language code: "${resolvedLang}" for voice: "${voice}"`);
 
-    // Parse and split text into sentence-sized segments and pauses
-    const parts = splitTextIntoChunks(text, 250);
+    // Parse and split text into sentence-sized segments and pauses (using larger 1000-char limits to prevent rate limits)
+    const parts = splitTextIntoChunks(text, 1000);
     console.log(`[Audio Generation] Script split into ${parts.length} segments.`);
 
     // Generate output jobId
@@ -269,7 +298,8 @@ app.post("/api/generate-audio", async (req, res) => {
     // If there is only one short text chunk, execute a single quick TTS call
     if (parts.length === 1 && parts[0].type === "text") {
       console.log(`[Audio Generation] Short text detected. Running single TTS generation...`);
-      const audioOutput = await replicate.run(
+      const audioOutput = await runWithRetry(
+        replicate,
         "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
         {
           input: {
@@ -312,7 +342,8 @@ app.post("/api/generate-audio", async (req, res) => {
       
       if (part.type === "text") {
         console.log(`[Audio Generation] Generating TTS chunk ${i + 1}/${parts.length}: "${part.content.substring(0, 40)}..."`);
-        const audioOutput = await replicate.run(
+        const audioOutput = await runWithRetry(
+          replicate,
           "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
           {
             input: {
