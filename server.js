@@ -32,6 +32,58 @@ if (!fs.existsSync("public/uploads")) {
 // In-memory job status store
 const jobs = new Map();
 
+// Lightweight JSON-based database for session/run history
+class HistoryDB {
+  constructor(filePath) {
+    this.filePath = filePath;
+    this.history = [];
+    this.init();
+  }
+
+  init() {
+    try {
+      if (fs.existsSync(this.filePath)) {
+        const data = fs.readFileSync(this.filePath, "utf-8");
+        this.history = JSON.parse(data);
+      } else {
+        this.save();
+      }
+    } catch (err) {
+      console.error("[HistoryDB] Failed to initialize:", err);
+      this.history = [];
+    }
+  }
+
+  save() {
+    try {
+      fs.writeFileSync(this.filePath, JSON.stringify(this.history, null, 2), "utf-8");
+    } catch (err) {
+      console.error("[HistoryDB] Failed to save history:", err);
+    }
+  }
+
+  addOrUpdate(id, record) {
+    const idx = this.history.findIndex(item => item.id === id);
+    if (idx !== -1) {
+      this.history[idx] = { ...this.history[idx], ...record, updatedAt: new Date().toISOString() };
+    } else {
+      this.history.unshift({
+        id,
+        createdAt: new Date().toISOString(),
+        ...record
+      });
+    }
+    this.save();
+  }
+
+  getAll() {
+    return this.history;
+  }
+}
+
+const dbPath = path.join("public", "uploads", "history.json");
+const db = new HistoryDB(dbPath);
+
 // Configure Multer memory storage for custom avatar uploads
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -103,9 +155,22 @@ function downloadFile(url, destPath) {
   });
 }
 
+// Automatically resolve Kokoro language codes based on voice profile prefixes
+function getLanguageCode(voice) {
+  if (!voice) return "a";
+  if (voice.startsWith("af_") || voice.startsWith("am_")) return "a"; // American English
+  if (voice.startsWith("bf_") || voice.startsWith("bm_")) return "b"; // British English
+  if (voice.startsWith("es_")) return "e"; // Spanish
+  if (voice.startsWith("fr_")) return "f"; // French
+  if (voice.startsWith("jf_")) return "j"; // Japanese
+  if (voice.startsWith("zf_")) return "z"; // Mandarin Chinese
+  return "a";
+}
+
 // Route 1: Generate Audio Preview (supporting custom [pause X.X] markers)
 app.post("/api/generate-audio", async (req, res) => {
   try {
+    console.log(`[Audio Generation Request] Received body:`, req.body);
     const { text, voice, customToken } = req.body;
 
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
@@ -124,6 +189,8 @@ app.post("/api/generate-audio", async (req, res) => {
     }
 
     const replicate = new Replicate({ auth: apiToken });
+    const resolvedLang = getLanguageCode(voice);
+    console.log(`[Audio Generation] Resolved language code: "${resolvedLang}" for voice: "${voice}"`);
 
     // Parse pause tags [pause X.X]
     const regex = /\[pause\s+(\d+(?:\.\d+)?)]/g;
@@ -160,11 +227,24 @@ app.post("/api/generate-audio", async (req, res) => {
             text: text,
             voice: voice || "af_bella",
             speed: 1.0,
+            language_code: resolvedLang
           },
         }
       );
       const audioUrl = audioOutput.toString();
       await downloadFile(audioUrl, finalOutputPath);
+
+      // Save to database history
+      db.addOrUpdate(audioJobId, {
+        text: text,
+        voice: voice || "af_bella",
+        audioUrl: `/uploads/${outputFilename}`,
+        videoUrl: null,
+        lipsyncEngine: null,
+        avatarPreset: null,
+        status: "audio_preview"
+      });
+
       return res.status(200).json({
         success: true,
         audioUrl: `/uploads/${outputFilename}`,
@@ -190,6 +270,7 @@ app.post("/api/generate-audio", async (req, res) => {
               text: part.content,
               voice: voice || "af_bella",
               speed: 1.0,
+              language_code: resolvedLang
             },
           }
         );
@@ -222,6 +303,18 @@ app.post("/api/generate-audio", async (req, res) => {
     cleanUpTempFiles(segmentFiles);
 
     console.log(`[Audio Generation] Merge complete. Output saved to: ${finalOutputPath}`);
+
+    // Save to database history
+    db.addOrUpdate(audioJobId, {
+      text: text,
+      voice: voice || "af_bella",
+      audioUrl: `/uploads/${outputFilename}`,
+      videoUrl: null,
+      lipsyncEngine: null,
+      avatarPreset: null,
+      status: "audio_preview"
+    });
+
     return res.status(200).json({
       success: true,
       audioUrl: `/uploads/${outputFilename}`,
@@ -318,6 +411,18 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
     // Generate jobId
     const jobId = Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 
+    // Resolve database history job ID (maps video to the original audio record)
+    const audioJobIdMatch = audioFilename.match(/audio-(.+)\.wav/);
+    const dbJobId = audioJobIdMatch ? audioJobIdMatch[1] : jobId;
+
+    // Update history DB to reflect starting video generation stage
+    db.addOrUpdate(dbJobId, {
+      lipsyncEngine: lipsyncEngine,
+      avatarType: avatarType,
+      avatarPreset: avatarPreset || null,
+      status: "video_generating"
+    });
+
     // Initialize job status
     jobs.set(jobId, {
       status: "processing",
@@ -412,6 +517,12 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
           error: null
         });
 
+        // Update history DB to reflect completed run
+        db.addOrUpdate(dbJobId, {
+          videoUrl: videoUrl,
+          status: "completed"
+        });
+
       } catch (error) {
         console.error(`[Job ${jobId}] Video generation failed:`, error);
         cleanUpTempFiles(tempFilesToCleanup);
@@ -422,6 +533,12 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
           audioUrl: `/uploads/${audioFilename}`,
           videoUrl: null,
           error: error.message || "Video generation failed."
+        });
+
+        // Update history DB to reflect failure
+        db.addOrUpdate(dbJobId, {
+          status: "failed",
+          error: error.message
         });
       }
     })();
@@ -447,6 +564,14 @@ app.get("/api/jobs/:id", (req, res) => {
   return res.status(200).json({
     success: true,
     job: job
+  });
+});
+
+// Get history endpoint
+app.get("/api/history", (req, res) => {
+  return res.status(200).json({
+    success: true,
+    history: db.getAll()
   });
 });
 

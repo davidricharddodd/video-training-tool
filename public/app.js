@@ -191,6 +191,9 @@ document.addEventListener("DOMContentLoaded", () => {
       generatedAudioFilename = data.filename;
       logMessage(`Audio generated successfully! Preview URL: ${data.audioUrl}`, "success");
 
+      // Reload history to display newly created audio preview run
+      loadHistory();
+
       // Setup audio preview element
       audioPreview.src = data.audioUrl;
       audioPreview.load();
@@ -331,8 +334,11 @@ document.addEventListener("DOMContentLoaded", () => {
             generateVideoBtn.disabled = false;
             videoSpinner.classList.add("hidden");
             resetBtn.disabled = false;
+
+            loadHistory();
           } else if (job.status === "failed") {
             clearInterval(pollInterval);
+            loadHistory();
             throw new Error(job.error || "Video generation failed on server.");
           }
         } catch (pollErr) {
@@ -344,6 +350,7 @@ document.addEventListener("DOMContentLoaded", () => {
           generateVideoBtn.disabled = false;
           videoSpinner.classList.add("hidden");
           resetBtn.disabled = false;
+          loadHistory();
         }
       }, 3000);
 
@@ -394,4 +401,123 @@ document.addEventListener("DOMContentLoaded", () => {
     currentStepDetail.textContent = detail;
     progressBar.style.width = `${percentage}%`;
   }
+
+  // Database History Management
+  const historyList = document.getElementById("historyList");
+  const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
+
+  async function loadHistory() {
+    try {
+      const res = await fetch("/api/history");
+      const data = await res.json();
+      if (!data.success) return;
+
+      const history = data.history;
+      if (history.length === 0) {
+        historyList.innerHTML = `
+          <div class="text-center py-6 text-slate-600 text-xs">
+            No past generations stored in database.
+          </div>
+        `;
+        return;
+      }
+
+      historyList.innerHTML = "";
+      history.forEach(item => {
+        const dateStr = new Date(item.createdAt).toLocaleString();
+        const textPreview = item.text.length > 80 ? item.text.substring(0, 80) + "..." : item.text;
+        
+        let statusBadge = "";
+        let actionBtn = "";
+
+        if (item.status === "completed" && item.videoUrl) {
+          statusBadge = `<span class="px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-900 rounded-md text-[10px] font-semibold">Video Ready</span>`;
+          actionBtn = `
+            <button class="load-video-btn px-2.5 py-1 bg-violet-600 border border-violet-500 hover:bg-violet-500 rounded-lg text-white font-medium text-[11px] transition-colors" 
+              data-video="${item.videoUrl}" data-audio="${item.audioUrl}">
+              Load Video
+            </button>
+          `;
+        } else if (item.status === "failed") {
+          statusBadge = `<span class="px-2 py-0.5 bg-rose-950/80 text-rose-450 border border-rose-900 rounded-md text-[10px] font-semibold">Failed</span>`;
+        } else if (item.status === "video_generating") {
+          statusBadge = `<span class="px-2 py-0.5 bg-amber-950 text-amber-400 border border-amber-900 rounded-md text-[10px] font-semibold animate-pulse">Syncing...</span>`;
+        } else {
+          statusBadge = `<span class="px-2 py-0.5 bg-slate-900 text-slate-400 border border-slate-800 rounded-md text-[10px] font-semibold">Audio Preview</span>`;
+          actionBtn = `
+            <button class="use-audio-btn px-2.5 py-1 bg-slate-900 border border-slate-800 hover:border-violet-500 hover:text-violet-400 rounded-lg font-medium text-[11px] transition-colors"
+              data-filename="${item.audioUrl.split('/').pop()}" data-url="${item.audioUrl}">
+              Use Audio
+            </button>
+          `;
+        }
+
+        const card = document.createElement("div");
+        card.className = "p-3.5 bg-slate-950/50 border border-slate-900 hover:border-slate-800 rounded-xl space-y-2.5 transition-all duration-150 text-left";
+        card.innerHTML = `
+          <div class="flex items-start justify-between">
+            <div class="space-y-0.5 pr-2">
+              <span class="text-[9px] text-slate-650 font-bold uppercase tracking-wider">${item.voice} • ${dateStr}</span>
+              <p class="text-xs text-slate-300 leading-relaxed font-medium" title="${item.text}">${textPreview}</p>
+            </div>
+            ${statusBadge}
+          </div>
+          <div class="flex items-center justify-between pt-2 border-t border-slate-900/60">
+            <audio src="${item.audioUrl}" controls class="h-6 w-40 bg-slate-950 rounded border border-slate-900 p-0.5 text-xs"></audio>
+            ${actionBtn}
+          </div>
+        `;
+        historyList.appendChild(card);
+      });
+
+      // Bind Load Video buttons
+      document.querySelectorAll(".load-video-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const videoUrl = btn.getAttribute("data-video");
+          const audioUrl = btn.getAttribute("data-audio");
+          
+          videoSource.src = videoUrl;
+          outputVideoPlayer.load();
+          downloadBtn.href = videoUrl;
+          rawLinkBtn.href = videoUrl;
+          rawAudioLink.href = audioUrl;
+
+          idleState.classList.add("hidden");
+          progressState.classList.add("hidden");
+          successState.classList.remove("hidden");
+          logMessage(`Loaded history video run. Playback initialized.`);
+        });
+      });
+
+      // Bind Use Audio buttons (allows restarting from the approved audio step)
+      document.querySelectorAll(".use-audio-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const filename = btn.getAttribute("data-filename");
+          const url = btn.getAttribute("data-url");
+          
+          generatedAudioFilename = filename;
+          audioPreview.src = url;
+          audioPreview.load();
+
+          // Lock inputs
+          scriptText.disabled = true;
+          voiceSelect.disabled = true;
+          pauseBtns.forEach(p => p.disabled = true);
+
+          audioActionContainer.classList.add("hidden");
+          videoActionContainer.classList.remove("hidden");
+          logMessage(`Selected audio preview from history: ${filename}. Ready to generate video.`);
+        });
+      });
+
+    } catch (err) {
+      console.error("Failed to load history list:", err);
+    }
+  }
+
+  // Refresh history button listener
+  refreshHistoryBtn.addEventListener("click", loadHistory);
+
+  // Load history initially
+  loadHistory();
 });
