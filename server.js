@@ -83,7 +83,7 @@ function cleanUpTempFiles(paths) {
 
 app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
   try {
-    const { text, voice, avatarType, avatarPreset, avatarUrl, customToken } = req.body;
+    const { text, voice, avatarType, avatarPreset, avatarUrl, customToken, lipsyncEngine } = req.body;
 
     // 1. Resolve Replicate API Token
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
@@ -201,36 +201,65 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
           error: null
         });
 
-        // 3. Process video duration looping to prevent cutoff
-        console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
-        const audioDuration = await getDuration(audioUrl);
-        const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
-
+        // 3. Process video input based on engine selection
         let finalVideoInput;
-        // If the processed path is a remote URL, we can pass it directly. Otherwise read local temp file as Buffer.
-        if (processedVideoPath.startsWith("http://") || processedVideoPath.startsWith("https://")) {
-          finalVideoInput = processedVideoPath;
-        } else {
-          finalVideoInput = fs.readFileSync(processedVideoPath);
-          tempFilesToCleanup.push(processedVideoPath); // Queue for cleanup
-        }
+        let videoUrl;
 
-        console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
-        const videoOutput = await replicate.run(
-          "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
-          {
-            input: {
-              video: finalVideoInput,
-              audio: audioUrl,
-            },
+        if (lipsyncEngine === "sync_lipsync_2" || lipsyncEngine === "sync_lipsync_2_pro") {
+          const modelPath = lipsyncEngine === "sync_lipsync_2_pro" ? "sync/lipsync-2-pro" : "sync/lipsync-2";
+          
+          if (rawVideoPath.startsWith("http://") || rawVideoPath.startsWith("https://")) {
+            finalVideoInput = rawVideoPath;
+          } else {
+            finalVideoInput = fs.readFileSync(rawVideoPath);
           }
-        );
 
-        const videoUrl = videoOutput.toString();
-        console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+          console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via Sync Labs (${modelPath})...`);
+          const videoOutput = await replicate.run(
+            modelPath,
+            {
+              input: {
+                video: finalVideoInput,
+                audio: audioUrl,
+                sync_mode: "loop"
+              },
+            }
+          );
+          videoUrl = videoOutput.toString();
+          console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
 
-        // Cleanup temporary files
-        cleanUpTempFiles(tempFilesToCleanup);
+          // Cleanup temporary files
+          cleanUpTempFiles(tempFilesToCleanup);
+
+        } else {
+          // Default: LatentSync
+          console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
+          const audioDuration = await getDuration(audioUrl);
+          const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
+
+          if (processedVideoPath.startsWith("http://") || processedVideoPath.startsWith("https://")) {
+            finalVideoInput = processedVideoPath;
+          } else {
+            finalVideoInput = fs.readFileSync(processedVideoPath);
+            tempFilesToCleanup.push(processedVideoPath); // Queue for cleanup
+          }
+
+          console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
+          const videoOutput = await replicate.run(
+            "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
+            {
+              input: {
+                video: finalVideoInput,
+                audio: audioUrl,
+              },
+            }
+          );
+          videoUrl = videoOutput.toString();
+          console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+
+          // Cleanup temporary files
+          cleanUpTempFiles(tempFilesToCleanup);
+        }
 
         // Update job to completed status
         jobs.set(jobId, {

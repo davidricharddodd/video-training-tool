@@ -122,6 +122,19 @@
             </select>
           </div>
 
+          <!-- Lip-Sync Engine Selection -->
+          <div>
+            <label for="lipsyncEngine" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Lip-Sync Engine
+            </label>
+            <select id="lipsyncEngine" name="lipsyncEngine" 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
+              <option value="latentsync" selected>LatentSync (Cost: ~$0.05 total | Quality: Standard)</option>
+              <option value="sync_lipsync_2">Sync Labs Lipsync 2 (Cost: ~$0.05/sec | Quality: Studio Grade)</option>
+              <option value="sync_lipsync_2_pro">Sync Labs Lipsync 2 Pro (Cost: ~$0.083/sec | Quality: Cinema Grade)</option>
+            </select>
+          </div>
+
           <!-- Avatar Video Selection Type -->
           <div>
             <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">

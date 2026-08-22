@@ -7,6 +7,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const avatarTypeRadios = document.querySelectorAll('input[name="avatarType"]');
   const avatarPresetContainer = document.getElementById("avatarPresetContainer");
   const avatarPreset = document.getElementById("avatarPreset");
+  const lipsyncEngine = document.getElementById("lipsyncEngine");
   const presetPreviewVideo = document.getElementById("presetPreviewVideo");
   const avatarUrlContainer = document.getElementById("avatarUrlContainer");
   const avatarUploadContainer = document.getElementById("avatarUploadContainer");
@@ -156,11 +157,15 @@ document.addEventListener("DOMContentLoaded", () => {
     logMessage(`Voice profile selected: ${voice}`);
     logMessage(`Avatar source: ${avatarType}`);
 
+    const engine = lipsyncEngine.value;
+    logMessage(`Lip-Sync Engine: ${engine}`);
+
     // Build Form Data to handle potential file uploads
     const formData = new FormData();
     formData.append("text", text);
     formData.append("voice", voice);
     formData.append("avatarType", avatarType);
+    formData.append("lipsyncEngine", engine);
     formData.append("customToken", customToken);
 
     if (avatarType === "preset") {
