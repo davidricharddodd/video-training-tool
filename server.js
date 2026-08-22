@@ -300,13 +300,12 @@ app.post("/api/generate-audio", async (req, res) => {
       console.log(`[Audio Generation] Short text detected. Running single TTS generation...`);
       const audioOutput = await runWithRetry(
         replicate,
-        "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
+        "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
         {
           input: {
             text: text,
             voice: voice || "af_bella",
-            speed: 1.0,
-            language_code: resolvedLang
+            speed: 1.0
           },
         }
       );
@@ -344,13 +343,12 @@ app.post("/api/generate-audio", async (req, res) => {
         console.log(`[Audio Generation] Generating TTS chunk ${i + 1}/${parts.length}: "${part.content.substring(0, 40)}..."`);
         const audioOutput = await runWithRetry(
           replicate,
-          "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
+          "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
           {
             input: {
               text: part.content,
               voice: voice || "af_bella",
-              speed: 1.0,
-              language_code: resolvedLang
+              speed: 1.0
             },
           }
         );
