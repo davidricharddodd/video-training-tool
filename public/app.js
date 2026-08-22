@@ -197,7 +197,6 @@ document.addEventListener("DOMContentLoaded", () => {
       // Setup audio preview element
       audioPreview.src = data.audioUrl;
       audioPreview.load();
-      audioPreview.play().catch(e => console.log("Auto-play blocked by browser. Ready for manual play."));
 
       // Lock inputs to prevent mismatches
       scriptText.disabled = true;
@@ -370,7 +369,6 @@ document.addEventListener("DOMContentLoaded", () => {
     generatedAudioFilename = "";
     
     // Reset inputs
-    scriptText.value = "";
     scriptText.disabled = false;
     voiceSelect.disabled = false;
     pauseBtns.forEach(btn => btn.disabled = false);
