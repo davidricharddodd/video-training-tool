@@ -130,16 +130,26 @@
             </select>
           </div>
 
-          <!-- Lip-Sync Engine Selection -->
+          <!-- Lip-Sync Provider Selection -->
+          <div>
+            <label for="lipsyncProvider" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              Lip-Sync Provider
+            </label>
+            <select id="lipsyncProvider" name="lipsyncProvider" 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
+              <option value="fal" selected>Fal.ai (Best for 2-3 min videos)</option>
+              <option value="replicate">Replicate (Standard)</option>
+            </select>
+          </div>
+
+          <!-- Lip-Sync Model Selection -->
           <div>
             <label for="lipsyncEngine" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-              Lip-Sync Engine
+              Lip-Sync Model / Process
             </label>
             <select id="lipsyncEngine" name="lipsyncEngine" 
               class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
-              <option value="latentsync">LatentSync (Cost: ~$0.05 total | Quality: Standard)</option>
-              <option value="sync_lipsync_2" selected>Sync Labs Lipsync 2 (Cost: ~$0.05/sec | Quality: Studio Grade)</option>
-              <option value="sync_lipsync_2_pro">Sync Labs Lipsync 2 Pro (Cost: ~$0.083/sec | Quality: Cinema Grade)</option>
+              <!-- Dynamically populated -->
             </select>
           </div>
 

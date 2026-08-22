@@ -12,6 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const avatarTypeRadios = document.querySelectorAll('input[name="avatarType"]');
   const avatarPresetContainer = document.getElementById("avatarPresetContainer");
   const avatarPreset = document.getElementById("avatarPreset");
+  const lipsyncProvider = document.getElementById("lipsyncProvider");
   const lipsyncEngine = document.getElementById("lipsyncEngine");
   const presetPreviewVideo = document.getElementById("presetPreviewVideo");
   const avatarUrlContainer = document.getElementById("avatarUrlContainer");
@@ -74,6 +75,35 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+
+  // Dynamic model options selection based on provider
+  const modelOptions = {
+    fal: [
+      { value: "fal_kling", text: "Kling LipSync (Cost: ~$0.17/min | Quality: Studio Grade)" },
+      { value: "fal_sync_lipsync_3", text: "Sync Labs Lipsync v3 (Cost: ~$3.00/min | Quality: Cinema Grade)" },
+      { value: "fal_wav2lip", text: "Wav2Lip (Cost: ~$0.70/min | Quality: Standard)" }
+    ],
+    replicate: [
+      { value: "sync_lipsync_2", text: "Sync Labs Lipsync 2 (Cost: ~$3.00/min | Quality: Studio Grade)" },
+      { value: "sync_lipsync_2_pro", text: "Sync Labs Lipsync 2 Pro (Cost: ~$5.00/min | Quality: Cinema Grade)" },
+      { value: "latentsync", text: "LatentSync (Cost: ~$0.05 total | Quality: Standard)" }
+    ]
+  };
+
+  function updateModelOptions() {
+    const provider = lipsyncProvider.value;
+    const options = modelOptions[provider] || [];
+    lipsyncEngine.innerHTML = "";
+    options.forEach(opt => {
+      const el = document.createElement("option");
+      el.value = opt.value;
+      el.textContent = opt.text;
+      lipsyncEngine.appendChild(el);
+    });
+  }
+
+  lipsyncProvider.addEventListener("change", updateModelOptions);
+  updateModelOptions(); // Initialize default list on load
 
   // Map presets to their raw video URLs for frontend previewing
   const presetVideoUrls = {
@@ -228,12 +258,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const avatarType = document.querySelector('input[name="avatarType"]:checked').value;
     const avatarPreset = document.getElementById("avatarPreset").value;
     const avatarUrl = document.getElementById("avatarUrl").value;
+    const provider = lipsyncProvider.value;
     const engine = lipsyncEngine.value;
 
     // Build Form Data to handle potential file uploads
     const formData = new FormData();
     formData.append("audioFilename", generatedAudioFilename);
     formData.append("avatarType", avatarType);
+    formData.append("lipsyncProvider", provider);
     formData.append("lipsyncEngine", engine);
     formData.append("customToken", customToken);
 

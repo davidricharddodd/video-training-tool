@@ -408,16 +408,74 @@ app.post("/api/generate-audio", async (req, res) => {
   }
 });
 
+// Helper to start Fal.ai async queue prediction
+async function startFalPrediction(endpointId, input, apiKey) {
+  const url = `https://queue.fal.run/${endpointId}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Key ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ input })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Fal.ai API error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.request_id;
+}
+
+// Helper to poll Fal.ai async queue prediction until completion
+async function pollFalPrediction(endpointId, requestId, apiKey) {
+  const url = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
+  
+  while (true) {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Authorization": `Key ${apiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Fal.ai polling error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    if (data.status === "COMPLETED") {
+      return data;
+    } else if (data.status === "FAILED") {
+      throw new Error(data.error || "Fal.ai prediction failed.");
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
+
 // Route 2: Generate Lip-Synced Video using Approved Audio
 app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) => {
   try {
-    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, lipsyncEngine } = req.body;
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, lipsyncProvider, lipsyncEngine } = req.body;
+    const provider = lipsyncProvider || "replicate";
 
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
-    if (!apiToken) {
+    if (provider === "replicate" && !apiToken) {
       return res.status(400).json({
         success: false,
         error: "Replicate API Token is missing.",
+      });
+    }
+
+    const falApiKey = process.env.FAL_KEY;
+    if (provider === "fal" && !falApiKey) {
+      return res.status(400).json({
+        success: false,
+        error: "Fal.ai API key (FAL_KEY) is not configured in your environment variables. Please add it to your Railway settings.",
       });
     }
 
@@ -445,6 +503,8 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
     // 2. Resolve Initial Avatar Video source
     let rawVideoPath;
     let tempFilesToCleanup = [];
+    const host = req.get("host");
+    const protocol = req.protocol;
 
     if (avatarType === "upload") {
       if (!req.file) {
@@ -453,8 +513,8 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
           error: "Avatar video file upload is selected, but no file was uploaded.",
         });
       }
-      const tempUploadDir = os.tmpdir();
-      const tempUploadPath = path.join(tempUploadDir, `upload_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`);
+      const uploadFilename = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`;
+      const tempUploadPath = path.join("public", "uploads", uploadFilename);
       fs.writeFileSync(tempUploadPath, req.file.buffer);
       rawVideoPath = tempUploadPath;
       tempFilesToCleanup.push(tempUploadPath);
@@ -528,61 +588,175 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
         let finalVideoInput;
         let videoUrl;
 
-        // Sync Labs
-        if (lipsyncEngine === "sync_lipsync_2" || lipsyncEngine === "sync_lipsync_2_pro") {
-          const modelPath = lipsyncEngine === "sync_lipsync_2_pro" ? "sync/lipsync-2-pro" : "sync/lipsync-2";
+        // Fal.ai Provider Branch
+        if (provider === "fal") {
+          console.log(`[Job ${jobId}] Running Fal.ai pipeline...`);
           
+          const falEndpoints = {
+            fal_kling: "fal-ai/kling-video/lipsync/audio-to-video",
+            fal_sync_lipsync_3: "fal-ai/sync-lipsync/v3",
+            fal_wav2lip: "fal-ai/wav2lip"
+          };
+          const endpointId = falEndpoints[lipsyncEngine] || falEndpoints.fal_kling;
+
+          const publicAudioUrl = `${protocol}://${host}/uploads/${audioFilename}`;
+          let publicVideoUrl;
+
           if (rawVideoPath.startsWith("http://") || rawVideoPath.startsWith("https://")) {
-            finalVideoInput = rawVideoPath;
+            publicVideoUrl = rawVideoPath;
           } else {
-            finalVideoInput = fs.readFileSync(rawVideoPath);
+            publicVideoUrl = `${protocol}://${host}/uploads/${path.basename(rawVideoPath)}`;
           }
 
-          console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via Sync Labs (${modelPath})...`);
-          const videoOutput = await replicate.run(
-            modelPath,
-            {
-              input: {
-                video: finalVideoInput,
-                audio: audioBuffer, // Pass local audio buffer directly
-                sync_mode: "loop"
-              },
-            }
-          );
-          videoUrl = videoOutput.toString();
-          console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+          const audioDuration = await getDuration(localAudioPath);
 
-          // Cleanup temporary files
+          // Auto-Splitting Kling Pipeline (only if lipsyncEngine is fal_kling and duration > 60s)
+          if (lipsyncEngine === "fal_kling" && audioDuration > 60) {
+            console.log(`[Job ${jobId}] Kling Auto-Splitting enabled. Duration: ${audioDuration}s. Slicing into 60s segments...`);
+            
+            // Loop video first to match the audio length
+            const loopedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
+            if (loopedVideoPath !== rawVideoPath) {
+              tempFilesToCleanup.push(loopedVideoPath);
+            }
+
+            const numSegments = Math.ceil(audioDuration / 60);
+            const segmentPromises = [];
+
+            for (let i = 0; i < numSegments; i++) {
+              const start = i * 60;
+              const duration = Math.min(60, audioDuration - start);
+
+              // Slice audio segment
+              const audioSegFilename = `aud_seg_${jobId}_${i}.wav`;
+              const audioSegPath = path.join("public", "uploads", audioSegFilename);
+              await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${localAudioPath}" "${audioSegPath}"`);
+              tempFilesToCleanup.push(audioSegPath);
+
+              // Slice video segment
+              const videoSegFilename = `vid_seg_${jobId}_${i}.mp4`;
+              const videoSegPath = path.join("public", "uploads", videoSegFilename);
+              await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${loopedVideoPath}" "${videoSegPath}"`);
+              tempFilesToCleanup.push(videoSegPath);
+
+              // Dispatch segment to Fal.ai Kling
+              segmentPromises.push((async () => {
+                const publicSegAudioUrl = `${protocol}://${host}/uploads/${audioSegFilename}`;
+                const publicSegVideoUrl = `${protocol}://${host}/uploads/${videoSegFilename}`;
+
+                console.log(`[Job ${jobId}] Dispatching Kling segment ${i + 1}/${numSegments} (${duration}s)...`);
+                const reqId = await startFalPrediction(
+                  endpointId,
+                  { video_url: publicSegVideoUrl, audio_url: publicSegAudioUrl },
+                  falApiKey
+                );
+
+                const result = await pollFalPrediction(endpointId, reqId, falApiKey);
+                const outUrl = result.video ? result.video.url : result.output;
+                if (!outUrl) {
+                  throw new Error(`Kling segment prediction ${i + 1} did not return a valid video URL.`);
+                }
+
+                // Download segment locally so we can stitch them
+                const outputSegFilename = `out_seg_${jobId}_${i}.mp4`;
+                const outputSegPath = path.join("public", "uploads", outputSegFilename);
+                await downloadFile(outUrl, outputSegPath);
+                tempFilesToCleanup.push(outputSegPath);
+
+                return outputSegPath;
+              })());
+            }
+
+            // Wait for all segments to complete lip-sync rendering
+            const completedSegs = await Promise.all(segmentPromises);
+
+            // Stitch segments using ffmpeg complex filter concat
+            console.log(`[Job ${jobId}] Stitching ${completedSegs.length} Kling segments together...`);
+            let ffmpegArgs = [];
+            let filterInputs = "";
+            for (let i = 0; i < completedSegs.length; i++) {
+              ffmpegArgs.push(`-i "${completedSegs[i]}"`);
+              filterInputs += `[${i}:v][${i}:a]`;
+            }
+            const filterComplex = `"${filterInputs}concat=n=${completedSegs.length}:v=1:a=1[v][a]"`;
+            const stitchedFilename = `stitched-${jobId}.mp4`;
+            const finalStitchedPath = path.join("public", "uploads", stitchedFilename);
+
+            await execPromise(`ffmpeg -y ${ffmpegArgs.join(" ")} -filter_complex ${filterComplex} -map "[v]" -map "[a]" "${finalStitchedPath}"`);
+            
+            videoUrl = `/uploads/${stitchedFilename}`;
+            console.log(`[Job ${jobId}] Kling Auto-Stitching complete. Local URL: ${videoUrl}`);
+
+          } else {
+            // Standard single-run prediction for shorter assets or alternative engines
+            console.log(`[Job ${jobId}] Running single Fal.ai prediction using model ${endpointId}...`);
+            const reqId = await startFalPrediction(
+              endpointId,
+              { video_url: publicVideoUrl, audio_url: publicAudioUrl, sync_mode: "loop" },
+              falApiKey
+            );
+            const result = await pollFalPrediction(endpointId, reqId, falApiKey);
+            videoUrl = result.video ? result.video.url : result.output;
+            console.log(`[Job ${jobId}] Fal.ai run complete. Video URL: ${videoUrl}`);
+          }
+
           cleanUpTempFiles(tempFilesToCleanup);
 
         } else {
-          // Default: LatentSync
-          console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
-          const audioDuration = await getDuration(localAudioPath);
-          const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
-
-          if (processedVideoPath.startsWith("http://") || processedVideoPath.startsWith("https://")) {
-            finalVideoInput = processedVideoPath;
-          } else {
-            finalVideoInput = fs.readFileSync(processedVideoPath);
-            tempFilesToCleanup.push(processedVideoPath); // Queue for cleanup
-          }
-
-          console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
-          const videoOutput = await replicate.run(
-            "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
-            {
-              input: {
-                video: finalVideoInput,
-                audio: audioBuffer, // Pass local audio buffer directly
-              },
+          // Replicate Provider Branch
+          if (lipsyncEngine === "sync_lipsync_2" || lipsyncEngine === "sync_lipsync_2_pro") {
+            const modelPath = lipsyncEngine === "sync_lipsync_2_pro" ? "sync/lipsync-2-pro" : "sync/lipsync-2";
+            
+            if (rawVideoPath.startsWith("http://") || rawVideoPath.startsWith("https://")) {
+              finalVideoInput = rawVideoPath;
+            } else {
+              finalVideoInput = fs.readFileSync(rawVideoPath);
             }
-          );
-          videoUrl = videoOutput.toString();
-          console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
 
-          // Cleanup temporary files
-          cleanUpTempFiles(tempFilesToCleanup);
+            console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via Sync Labs (${modelPath})...`);
+            const videoOutput = await replicate.run(
+              modelPath,
+              {
+                input: {
+                  video: finalVideoInput,
+                  audio: audioBuffer, // Pass local audio buffer directly
+                  sync_mode: "loop"
+                },
+              }
+            );
+            videoUrl = videoOutput.toString();
+            console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+
+            cleanUpTempFiles(tempFilesToCleanup);
+
+          } else {
+            // Default: LatentSync
+            console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
+            const audioDuration = await getDuration(localAudioPath);
+            const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
+
+            if (processedVideoPath.startsWith("http://") || processedVideoPath.startsWith("https://")) {
+              finalVideoInput = processedVideoPath;
+            } else {
+              finalVideoInput = fs.readFileSync(processedVideoPath);
+              tempFilesToCleanup.push(processedVideoPath); // Queue for cleanup
+            }
+
+            console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
+            const videoOutput = await replicate.run(
+              "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
+              {
+                input: {
+                  video: finalVideoInput,
+                  audio: audioBuffer, // Pass local audio buffer directly
+                },
+              }
+            );
+            videoUrl = videoOutput.toString();
+            console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+
+            cleanUpTempFiles(tempFilesToCleanup);
+          }
         }
 
         // Update job to completed status
