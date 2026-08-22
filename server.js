@@ -167,7 +167,72 @@ function getLanguageCode(voice) {
   return "a";
 }
 
-// Route 1: Generate Audio Preview (supporting custom [pause X.X] markers)
+// Splits script text into smaller sentence-sized chunks (<250 chars) and pause durations
+function splitTextIntoChunks(text, maxChars = 250) {
+  const regex = /\[pause\s+(\d+(?:\.\d+)?)]/g;
+  let match;
+  let rawParts = [];
+  let lastIndex = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    const textPart = text.substring(lastIndex, match.index);
+    if (textPart) {
+      rawParts.push({ type: "text", content: textPart });
+    }
+    const duration = parseFloat(match[1]);
+    rawParts.push({ type: "pause", duration });
+    lastIndex = regex.lastIndex;
+  }
+  const remainingText = text.substring(lastIndex);
+  if (remainingText) {
+    rawParts.push({ type: "text", content: remainingText });
+  }
+
+  let finalParts = [];
+  for (const part of rawParts) {
+    if (part.type === "pause") {
+      finalParts.push(part);
+      continue;
+    }
+
+    // Split text by paragraphs first
+    const lines = part.content.split(/\n+/);
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
+      // If line is short, add it directly
+      if (trimmedLine.length <= maxChars) {
+        finalParts.push({ type: "text", content: trimmedLine });
+        continue;
+      }
+
+      // Split long line by sentences (., !, ?)
+      const sentences = trimmedLine.match(/[^.!?]+[.!?]*/g) || [trimmedLine];
+      let currentChunk = "";
+
+      for (let sentence of sentences) {
+        sentence = sentence.trim();
+        if (!sentence) continue;
+
+        if ((currentChunk + " " + sentence).trim().length <= maxChars) {
+          currentChunk = (currentChunk + " " + sentence).trim();
+        } else {
+          if (currentChunk) {
+            finalParts.push({ type: "text", content: currentChunk });
+          }
+          currentChunk = sentence;
+        }
+      }
+      if (currentChunk) {
+        finalParts.push({ type: "text", content: currentChunk });
+      }
+    }
+  }
+  return finalParts;
+}
+
+// Route 1: Generate Audio Preview (supporting custom [pause X.X] markers and long-form scripts)
 app.post("/api/generate-audio", async (req, res) => {
   try {
     console.log(`[Audio Generation Request] Received body:`, req.body);
@@ -192,34 +257,18 @@ app.post("/api/generate-audio", async (req, res) => {
     const resolvedLang = getLanguageCode(voice);
     console.log(`[Audio Generation] Resolved language code: "${resolvedLang}" for voice: "${voice}"`);
 
-    // Parse pause tags [pause X.X]
-    const regex = /\[pause\s+(\d+(?:\.\d+)?)]/g;
-    let match;
-    let parts = [];
-    let lastIndex = 0;
-
-    while ((match = regex.exec(text)) !== null) {
-      const textPart = text.substring(lastIndex, match.index).trim();
-      if (textPart) {
-        parts.push({ type: "text", content: textPart });
-      }
-      const duration = parseFloat(match[1]);
-      parts.push({ type: "pause", duration });
-      lastIndex = regex.lastIndex;
-    }
-    const remainingText = text.substring(lastIndex).trim();
-    if (remainingText) {
-      parts.push({ type: "text", content: remainingText });
-    }
+    // Parse and split text into sentence-sized segments and pauses
+    const parts = splitTextIntoChunks(text, 250);
+    console.log(`[Audio Generation] Script split into ${parts.length} segments.`);
 
     // Generate output jobId
     const audioJobId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
     const outputFilename = `audio-${audioJobId}.wav`;
     const finalOutputPath = path.join("public", "uploads", outputFilename);
 
-    // If there are no pause tags, just generate single audio
-    if (parts.length === 0 || (parts.length === 1 && parts[0].type === "text")) {
-      console.log(`[Audio Generation] No pauses detected. Running single TTS generation...`);
+    // If there is only one short text chunk, execute a single quick TTS call
+    if (parts.length === 1 && parts[0].type === "text") {
+      console.log(`[Audio Generation] Short text detected. Running single TTS generation...`);
       const audioOutput = await replicate.run(
         "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
         {
@@ -252,8 +301,8 @@ app.post("/api/generate-audio", async (req, res) => {
       });
     }
 
-    // With pauses: process parts sequentially
-    console.log(`[Audio Generation] Pause tags detected. Processing ${parts.length} segments...`);
+    // Process parts sequentially to construct the stitched audio
+    console.log(`[Audio Generation] Processing ${parts.length} segments sequentially...`);
     const tempOutputDir = os.tmpdir();
     const segmentFiles = [];
 
@@ -262,7 +311,7 @@ app.post("/api/generate-audio", async (req, res) => {
       const segmentFile = path.join(tempOutputDir, `seg_${audioJobId}_${i}.wav`);
       
       if (part.type === "text") {
-        console.log(`[Audio Generation] Generating TTS for part ${i + 1}/${parts.length}: "${part.content.substring(0, 30)}..."`);
+        console.log(`[Audio Generation] Generating TTS chunk ${i + 1}/${parts.length}: "${part.content.substring(0, 40)}..."`);
         const audioOutput = await replicate.run(
           "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
           {
@@ -278,7 +327,7 @@ app.post("/api/generate-audio", async (req, res) => {
         await downloadFile(audioUrl, segmentFile);
         segmentFiles.push(segmentFile);
       } else if (part.type === "pause") {
-        console.log(`[Audio Generation] Generating ${part.duration}s silence segment for part ${i + 1}/${parts.length}...`);
+        console.log(`[Audio Generation] Injecting ${part.duration}s silence chunk ${i + 1}/${parts.length}...`);
         await execPromise(
           `ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t ${part.duration} "${segmentFile}"`
         );
