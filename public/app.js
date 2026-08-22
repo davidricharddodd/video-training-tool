@@ -426,28 +426,32 @@ document.addEventListener("DOMContentLoaded", () => {
         const textPreview = item.text.length > 80 ? item.text.substring(0, 80) + "..." : item.text;
         
         let statusBadge = "";
-        let actionBtn = "";
+        let actionButtons = [];
 
         if (item.status === "completed" && item.videoUrl) {
           statusBadge = `<span class="px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-900 rounded-md text-[10px] font-semibold">Video Ready</span>`;
-          actionBtn = `
+          actionButtons.push(`
             <button class="load-video-btn px-2.5 py-1 bg-violet-600 border border-violet-500 hover:bg-violet-500 rounded-lg text-white font-medium text-[11px] transition-colors" 
               data-video="${item.videoUrl}" data-audio="${item.audioUrl}">
               Load Video
             </button>
-          `;
+          `);
         } else if (item.status === "failed") {
           statusBadge = `<span class="px-2 py-0.5 bg-rose-950/80 text-rose-450 border border-rose-900 rounded-md text-[10px] font-semibold">Failed</span>`;
         } else if (item.status === "video_generating") {
           statusBadge = `<span class="px-2 py-0.5 bg-amber-950 text-amber-400 border border-amber-900 rounded-md text-[10px] font-semibold animate-pulse">Syncing...</span>`;
         } else {
           statusBadge = `<span class="px-2 py-0.5 bg-slate-900 text-slate-400 border border-slate-800 rounded-md text-[10px] font-semibold">Audio Preview</span>`;
-          actionBtn = `
+        }
+
+        // Always show "Use Audio" if audio URL exists, so they can retry or build another video run
+        if (item.audioUrl) {
+          actionButtons.push(`
             <button class="use-audio-btn px-2.5 py-1 bg-slate-900 border border-slate-800 hover:border-violet-500 hover:text-violet-400 rounded-lg font-medium text-[11px] transition-colors"
               data-filename="${item.audioUrl.split('/').pop()}" data-url="${item.audioUrl}">
               Use Audio
             </button>
-          `;
+          `);
         }
 
         const card = document.createElement("div");
@@ -462,7 +466,9 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
           <div class="flex items-center justify-between pt-2 border-t border-slate-900/60">
             <audio src="${item.audioUrl}" controls class="h-6 w-40 bg-slate-950 rounded border border-slate-900 p-0.5 text-xs"></audio>
-            ${actionBtn}
+            <div class="flex items-center space-x-1">
+              ${actionButtons.join("")}
+            </div>
           </div>
         `;
         historyList.appendChild(card);
@@ -496,6 +502,9 @@ document.addEventListener("DOMContentLoaded", () => {
           generatedAudioFilename = filename;
           audioPreview.src = url;
           audioPreview.load();
+
+          // Reset main player/status states back to idle config
+          resetUI();
 
           // Lock inputs
           scriptText.disabled = true;
