@@ -1,8 +1,13 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const form = document.getElementById("generatorForm");
-  const generateBtn = document.getElementById("generateBtn");
-  const spinner = document.getElementById("spinner");
-  
+  const generateAudioBtn = document.getElementById("generateAudioBtn");
+  const audioSpinner = document.getElementById("audioSpinner");
+  const generateVideoBtn = document.getElementById("generateVideoBtn");
+  const videoSpinner = document.getElementById("videoSpinner");
+  const audioActionContainer = document.getElementById("audioActionContainer");
+  const videoActionContainer = document.getElementById("videoActionContainer");
+  const audioPreview = document.getElementById("audioPreview");
+  const resetBtn = document.getElementById("resetBtn");
+
   // Conditionally visible containers
   const avatarTypeRadios = document.querySelectorAll('input[name="avatarType"]');
   const avatarPresetContainer = document.getElementById("avatarPresetContainer");
@@ -124,46 +129,108 @@ document.addEventListener("DOMContentLoaded", () => {
     consoleLogs.innerHTML = `<div class="text-slate-600">// Console cleared. Ready.</div>`;
   });
 
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
+  // Variables to hold current audio filename from Step 1
+  let generatedAudioFilename = "";
 
-    const text = document.getElementById("text").value;
-    const voice = document.getElementById("voice").value;
+  // Wire up Pause buttons
+  const pauseBtns = document.querySelectorAll(".pause-btn");
+  const scriptText = document.getElementById("text");
+  const voiceSelect = document.getElementById("voice");
+
+  pauseBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const pauseVal = btn.getAttribute("data-pause");
+      const cursorPosition = scriptText.selectionStart;
+      const originalText = scriptText.value;
+      const beforeText = originalText.substring(0, cursorPosition);
+      const afterText = originalText.substring(cursorPosition);
+      const insertStr = `[pause ${pauseVal}]`;
+
+      scriptText.value = beforeText + insertStr + afterText;
+      scriptText.focus();
+      const newCursorPos = cursorPosition + insertStr.length;
+      scriptText.setSelectionRange(newCursorPos, newCursorPos);
+    });
+  });
+
+  // Step 1: Generate Audio Preview
+  generateAudioBtn.addEventListener("click", async () => {
+    const text = scriptText.value;
+    const voice = voiceSelect.value;
     const customToken = document.getElementById("customToken").value;
-    const avatarType = document.querySelector('input[name="avatarType"]:checked').value;
-    const avatarPreset = document.getElementById("avatarPreset").value;
-    const avatarUrl = document.getElementById("avatarUrl").value;
 
-    // Save token locally for session convenience
+    if (!text || text.trim() === "") {
+      alert("Please enter a speech script first.");
+      return;
+    }
+
     if (customToken) {
       localStorage.setItem("replicate_token", customToken);
     } else {
       localStorage.removeItem("replicate_token");
     }
 
-    // Set UI to loading state
-    generateBtn.disabled = true;
-    spinner.classList.remove("hidden");
-    
-    // Switch preview container to progress
-    idleState.classList.add("hidden");
-    successState.classList.add("hidden");
-    progressState.classList.remove("hidden");
-    
-    // Progress Step 1: Audio Generation
-    updateProgress("Generating Speech Audio", "Requesting text-to-speech from Replicate...", 30);
-    logMessage(`Initializing generation pipeline...`);
-    logMessage(`Text script length: ${text.length} characters.`);
-    logMessage(`Voice profile selected: ${voice}`);
-    logMessage(`Avatar source: ${avatarType}`);
+    // UI Loading state
+    generateAudioBtn.disabled = true;
+    audioSpinner.classList.remove("hidden");
+    logMessage("Step 1: Generating audio preview...");
 
+    try {
+      const response = await fetch("/api/generate-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice, customToken })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to generate audio.");
+      }
+
+      generatedAudioFilename = data.filename;
+      logMessage(`Audio generated successfully! Preview URL: ${data.audioUrl}`, "success");
+
+      // Setup audio preview element
+      audioPreview.src = data.audioUrl;
+      audioPreview.load();
+      audioPreview.play().catch(e => console.log("Auto-play blocked by browser. Ready for manual play."));
+
+      // Lock inputs to prevent mismatches
+      scriptText.disabled = true;
+      voiceSelect.disabled = true;
+      pauseBtns.forEach(btn => btn.disabled = true);
+
+      // Toggle action containers
+      audioActionContainer.classList.add("hidden");
+      videoActionContainer.classList.remove("hidden");
+
+    } catch (err) {
+      console.error(err);
+      logMessage(`Audio generation error: ${err.message}`, "error");
+      alert(`Audio Generation Failed: ${err.message}`);
+    } finally {
+      generateAudioBtn.disabled = false;
+      audioSpinner.classList.add("hidden");
+    }
+  });
+
+  // Step 2: Generate Video
+  generateVideoBtn.addEventListener("click", async () => {
+    if (!generatedAudioFilename) {
+      alert("No approved audio available. Please generate audio first.");
+      return;
+    }
+
+    const customToken = document.getElementById("customToken").value;
+    const avatarType = document.querySelector('input[name="avatarType"]:checked').value;
+    const avatarPreset = document.getElementById("avatarPreset").value;
+    const avatarUrl = document.getElementById("avatarUrl").value;
     const engine = lipsyncEngine.value;
-    logMessage(`Lip-Sync Engine: ${engine}`);
 
     // Build Form Data to handle potential file uploads
     const formData = new FormData();
-    formData.append("text", text);
-    formData.append("voice", voice);
+    formData.append("audioFilename", generatedAudioFilename);
     formData.append("avatarType", avatarType);
     formData.append("lipsyncEngine", engine);
     formData.append("customToken", customToken);
@@ -178,20 +245,29 @@ document.addEventListener("DOMContentLoaded", () => {
       const file = avatarFile.files[0];
       if (!file) {
         logMessage("Validation error: No file selected for upload.", "error");
-        resetUI();
         alert("Please select a file to upload first.");
         return;
       }
       formData.append("avatarFile", file);
       logMessage(`Uploading custom avatar video: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)...`);
-    } else {
-      logMessage(`Using default talking head avatar preset.`);
     }
 
+    // Set UI to loading state
+    generateVideoBtn.disabled = true;
+    videoSpinner.classList.remove("hidden");
+    resetBtn.disabled = true;
+
+    // Switch preview container to progress
+    idleState.classList.add("hidden");
+    successState.classList.add("hidden");
+    progressState.classList.remove("hidden");
+
+    logMessage(`Initializing video generation pipeline...`);
+    logMessage(`Lip-Sync Engine: ${engine}`);
+    updateProgress("Synchronizing Lips", "Requesting model inference from Replicate...", 60);
+
     try {
-      logMessage(`Submitting generation request to server...`);
-      
-      const response = await fetch("/api/generate", {
+      const response = await fetch("/api/generate-video", {
         method: "POST",
         body: formData
       });
@@ -199,13 +275,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || "Failed to initiate generation pipeline.");
+        throw new Error(data.error || "Failed to initiate video generation.");
       }
 
       const jobId = data.jobId;
-      logMessage(`Generation job initiated successfully. Job ID: ${jobId}`);
-      logMessage(`Step 1/2: Triggering Kokoro-82M TTS model...`);
-      updateProgress("Generating Speech Audio", "Requesting text-to-speech from Replicate...", 30);
+      logMessage(`Video generation job initiated. Job ID: ${jobId}`);
 
       // Start polling the job status
       let lastStep = "init";
@@ -225,23 +299,16 @@ document.addEventListener("DOMContentLoaded", () => {
           if (job.status === "processing") {
             if (job.step !== lastStep) {
               lastStep = job.step;
-              if (job.step === "tts") {
-                updateProgress("Generating Speech Audio", "Processing text segments. Generating natural voice curves...", 40);
-              } else if (job.step === "latentsync") {
-                logMessage(`Step 1/2 complete. Speech audio generated.`, "success");
-                logMessage(`Step 2/2: Starting LatentSync lip-sync model on Replicate...`);
-                logMessage(`This process takes 1-3 minutes. Checking progress...`);
-                updateProgress("Synchronizing Lips (LatentSync)", "Applying facial audio-conditioned diffusion. This may take up to 2-3 minutes...", 70);
+              if (job.step === "latentsync") {
+                logMessage(`Starting lip-sync execution...`);
+                updateProgress("Synchronizing Lips", "Applying audio-conditioned diffusion. This may take 1-3 minutes...", 75);
               }
             } else if (job.step === "latentsync") {
-              // Periodically update the progress bar to show activity during lip sync
-              updateProgress("Synchronizing Lips (LatentSync)", "Generating facial expression changes in latent space...", 85);
+              updateProgress("Synchronizing Lips", "Generating facial expression changes in latent space...", 85);
             }
           } else if (job.status === "completed") {
             clearInterval(pollInterval);
             
-            logMessage(`Audio generated successfully.`, "success");
-            logMessage(`Audio Link: ${job.audioUrl}`);
             logMessage(`Avatar training video created successfully!`, "success");
             logMessage(`Output Video URL: ${job.videoUrl}`);
             
@@ -260,32 +327,57 @@ document.addEventListener("DOMContentLoaded", () => {
             progressState.classList.add("hidden");
             successState.classList.remove("hidden");
             
-            // Re-enable form
-            generateBtn.disabled = false;
-            spinner.classList.add("hidden");
+            // Re-enable buttons
+            generateVideoBtn.disabled = false;
+            videoSpinner.classList.add("hidden");
+            resetBtn.disabled = false;
           } else if (job.status === "failed") {
             clearInterval(pollInterval);
-            throw new Error(job.error || "Generation failed on server.");
+            throw new Error(job.error || "Video generation failed on server.");
           }
         } catch (pollErr) {
           clearInterval(pollInterval);
           console.error(pollErr);
           logMessage(`Polling error: ${pollErr.message}`, "error");
-          alert(`Pipeline Failed: ${pollErr.message}`);
+          alert(`Video Generation Failed: ${pollErr.message}`);
           resetUI();
-          generateBtn.disabled = false;
-          spinner.classList.add("hidden");
+          generateVideoBtn.disabled = false;
+          videoSpinner.classList.add("hidden");
+          resetBtn.disabled = false;
         }
       }, 3000);
 
     } catch (err) {
       console.error(err);
       logMessage(`Generation error: ${err.message}`, "error");
-      alert(`Pipeline Failed: ${err.message}`);
+      alert(`Video Generation Failed: ${err.message}`);
       resetUI();
-      generateBtn.disabled = false;
-      spinner.classList.add("hidden");
+      generateVideoBtn.disabled = false;
+      videoSpinner.classList.add("hidden");
+      resetBtn.disabled = false;
     }
+  });
+
+  // Reset / Start Over Handler
+  resetBtn.addEventListener("click", () => {
+    generatedAudioFilename = "";
+    
+    // Reset inputs
+    scriptText.value = "";
+    scriptText.disabled = false;
+    voiceSelect.disabled = false;
+    pauseBtns.forEach(btn => btn.disabled = false);
+
+    // Reset audio player
+    audioPreview.src = "";
+    audioPreview.load();
+
+    // Toggle action containers
+    videoActionContainer.classList.add("hidden");
+    audioActionContainer.classList.remove("hidden");
+
+    resetUI();
+    logMessage("Session reset. Ready for new audio generation.");
   });
 
   // Reset UI back to idle state

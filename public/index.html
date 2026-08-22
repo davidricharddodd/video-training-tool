@@ -76,12 +76,20 @@
 
           <!-- Text Script -->
           <div>
-            <label for="text" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-              Script Text
-            </label>
-            <textarea id="text" name="text" rows="4" required
-              placeholder="Enter the speech script for your training video. Keep it clear and punchy for the best lip-sync results..." 
-              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200 resize-none"></textarea>
+            <div class="flex items-center justify-between mb-1.5">
+              <label for="text" class="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Script Text
+              </label>
+              <div class="flex items-center space-x-1.5 text-[10px] text-slate-500 font-medium">
+                <span>Insert:</span>
+                <button type="button" data-pause="0.5" class="pause-btn px-1.5 py-0.5 bg-slate-900 border border-slate-800 hover:border-violet-500 hover:text-violet-400 rounded transition-all duration-150">+0.5s Pause</button>
+                <button type="button" data-pause="1.0" class="pause-btn px-1.5 py-0.5 bg-slate-900 border border-slate-800 hover:border-violet-500 hover:text-violet-400 rounded transition-all duration-150">+1.0s Pause</button>
+                <button type="button" data-pause="1.5" class="pause-btn px-1.5 py-0.5 bg-slate-900 border border-slate-800 hover:border-violet-500 hover:text-violet-400 rounded transition-all duration-150">+1.5s Pause</button>
+              </div>
+            </div>
+            <textarea id="text" name="text" rows="10" required
+              placeholder="Enter the speech script for your training video. Use pause buttons above to insert [pause 0.5] tags where you want speech pauses..." 
+              class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200 resize-none h-64"></textarea>
           </div>
 
           <!-- Voice Selection -->
@@ -220,14 +228,42 @@
             </div>
           </div>
 
-          <!-- Submit Button -->
-          <button type="submit" id="generateBtn"
-            class="w-full py-3 px-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-violet-950/20 hover:shadow-violet-500/10 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2">
-            <span>Generate Training Video</span>
-            <svg class="h-4 w-4 animate-spin hidden" id="spinner" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1021 12h-1.5" />
-            </svg>
-          </button>
+          <!-- Step 1 Submit: Generate Audio -->
+          <div id="audioActionContainer">
+            <button type="button" id="generateAudioBtn"
+              class="w-full py-3 px-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-violet-950/20 hover:shadow-violet-500/10 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2">
+              <span>Step 1: Generate Audio Preview</span>
+              <svg class="h-4 w-4 animate-spin hidden" id="audioSpinner" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1021 12h-1.5" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Step 2: Review Audio & Generate Video Container -->
+          <div id="videoActionContainer" class="hidden space-y-4 pt-4 border-t border-slate-800/85">
+            <div class="space-y-1.5">
+              <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Review Generated Audio
+              </label>
+              <!-- Audio player component -->
+              <audio id="audioPreview" controls class="w-full bg-slate-950 rounded-xl border border-slate-800 p-1"></audio>
+            </div>
+            
+            <div class="flex space-x-2">
+              <button type="button" id="generateVideoBtn"
+                class="flex-1 py-3 px-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-violet-950/20 hover:shadow-violet-500/10 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2">
+                <span>Step 2: Generate Video</span>
+                <svg class="h-4 w-4 animate-spin hidden" id="videoSpinner" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1021 12h-1.5" />
+                </svg>
+              </button>
+              
+              <button type="button" id="resetBtn"
+                class="px-4 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 font-medium rounded-xl text-sm transition-all duration-200">
+                Reset
+              </button>
+            </div>
+          </div>
         </form>
       </div>
 

@@ -24,6 +24,11 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static frontend files from 'public' directory
 app.use(express.static("public"));
 
+// Ensure public/uploads directory exists
+if (!fs.existsSync("public/uploads")) {
+  fs.mkdirSync("public/uploads", { recursive: true });
+}
+
 // In-memory job status store
 const jobs = new Map();
 
@@ -81,16 +86,33 @@ function cleanUpTempFiles(paths) {
   }
 }
 
-app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
-  try {
-    const { text, voice, avatarType, avatarPreset, avatarUrl, customToken, lipsyncEngine } = req.body;
+import https from "https";
 
-    // 1. Resolve Replicate API Token
+// Helper to download remote file to local path
+function downloadFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destPath);
+    https.get(url, (response) => {
+      response.pipe(file);
+      file.on("finish", () => {
+        file.close(resolve);
+      });
+    }).on("error", (err) => {
+      fs.unlink(destPath, () => reject(err));
+    });
+  });
+}
+
+// Route 1: Generate Audio Preview (supporting custom [pause X.X] markers)
+app.post("/api/generate-audio", async (req, res) => {
+  try {
+    const { text, voice, customToken } = req.body;
+
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
     if (!apiToken) {
       return res.status(400).json({
         success: false,
-        error: "Replicate API Token is missing. Provide it in .env or via client UI.",
+        error: "Replicate API Token is missing.",
       });
     }
 
@@ -101,8 +123,153 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
       });
     }
 
-    // Initialize Replicate client dynamically for this request
     const replicate = new Replicate({ auth: apiToken });
+
+    // Parse pause tags [pause X.X]
+    const regex = /\[pause\s+(\d+(?:\.\d+)?)]/g;
+    let match;
+    let parts = [];
+    let lastIndex = 0;
+
+    while ((match = regex.exec(text)) !== null) {
+      const textPart = text.substring(lastIndex, match.index).trim();
+      if (textPart) {
+        parts.push({ type: "text", content: textPart });
+      }
+      const duration = parseFloat(match[1]);
+      parts.push({ type: "pause", duration });
+      lastIndex = regex.lastIndex;
+    }
+    const remainingText = text.substring(lastIndex).trim();
+    if (remainingText) {
+      parts.push({ type: "text", content: remainingText });
+    }
+
+    // Generate output jobId
+    const audioJobId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
+    const outputFilename = `audio-${audioJobId}.wav`;
+    const finalOutputPath = path.join("public", "uploads", outputFilename);
+
+    // If there are no pause tags, just generate single audio
+    if (parts.length === 0 || (parts.length === 1 && parts[0].type === "text")) {
+      console.log(`[Audio Generation] No pauses detected. Running single TTS generation...`);
+      const audioOutput = await replicate.run(
+        "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
+        {
+          input: {
+            text: text,
+            voice: voice || "af_bella",
+            speed: 1.0,
+          },
+        }
+      );
+      const audioUrl = audioOutput.toString();
+      await downloadFile(audioUrl, finalOutputPath);
+      return res.status(200).json({
+        success: true,
+        audioUrl: `/uploads/${outputFilename}`,
+        filename: outputFilename
+      });
+    }
+
+    // With pauses: process parts sequentially
+    console.log(`[Audio Generation] Pause tags detected. Processing ${parts.length} segments...`);
+    const tempOutputDir = os.tmpdir();
+    const segmentFiles = [];
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const segmentFile = path.join(tempOutputDir, `seg_${audioJobId}_${i}.wav`);
+      
+      if (part.type === "text") {
+        console.log(`[Audio Generation] Generating TTS for part ${i + 1}/${parts.length}: "${part.content.substring(0, 30)}..."`);
+        const audioOutput = await replicate.run(
+          "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
+          {
+            input: {
+              text: part.content,
+              voice: voice || "af_bella",
+              speed: 1.0,
+            },
+          }
+        );
+        const audioUrl = audioOutput.toString();
+        await downloadFile(audioUrl, segmentFile);
+        segmentFiles.push(segmentFile);
+      } else if (part.type === "pause") {
+        console.log(`[Audio Generation] Generating ${part.duration}s silence segment for part ${i + 1}/${parts.length}...`);
+        await execPromise(
+          `ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t ${part.duration} "${segmentFile}"`
+        );
+        segmentFiles.push(segmentFile);
+      }
+    }
+
+    // Merge segment files using ffmpeg complex filter
+    console.log(`[Audio Generation] Merging ${segmentFiles.length} segments...`);
+    let ffmpegArgs = [];
+    let filterInputs = "";
+    for (let i = 0; i < segmentFiles.length; i++) {
+      ffmpegArgs.push(`-i "${segmentFiles[i]}"`);
+      filterInputs += `[${i}:a]`;
+    }
+    const filterComplex = `"${filterInputs}concat=n=${segmentFiles.length}:v=0:a=1[a]"`;
+    await execPromise(
+      `ffmpeg -y ${ffmpegArgs.join(" ")} -filter_complex ${filterComplex} -map "[a]" "${finalOutputPath}"`
+    );
+
+    // Cleanup temp segment files
+    cleanUpTempFiles(segmentFiles);
+
+    console.log(`[Audio Generation] Merge complete. Output saved to: ${finalOutputPath}`);
+    return res.status(200).json({
+      success: true,
+      audioUrl: `/uploads/${outputFilename}`,
+      filename: outputFilename
+    });
+
+  } catch (error) {
+    console.error("Audio generation failed:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "An unexpected error occurred during audio generation.",
+    });
+  }
+});
+
+// Route 2: Generate Lip-Synced Video using Approved Audio
+app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) => {
+  try {
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, lipsyncEngine } = req.body;
+
+    const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
+    if (!apiToken) {
+      return res.status(400).json({
+        success: false,
+        error: "Replicate API Token is missing.",
+      });
+    }
+
+    if (!audioFilename) {
+      return res.status(400).json({
+        success: false,
+        error: "Approved audio filename is missing.",
+      });
+    }
+
+    const replicate = new Replicate({ auth: apiToken });
+
+    // 1. Resolve Audio File input
+    const localAudioPath = path.join("public", "uploads", audioFilename);
+    if (!fs.existsSync(localAudioPath)) {
+      return res.status(400).json({
+        success: false,
+        error: "Audio file not found on server.",
+      });
+    }
+
+    // Read audio file as a Buffer (so Replicate client uploads it automatically)
+    const audioBuffer = fs.readFileSync(localAudioPath);
 
     // 2. Resolve Initial Avatar Video source
     let rawVideoPath;
@@ -115,7 +282,6 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
           error: "Avatar video file upload is selected, but no file was uploaded.",
         });
       }
-      // Save uploaded buffer to a temporary file for ffmpeg processing
       const tempUploadDir = os.tmpdir();
       const tempUploadPath = path.join(tempUploadDir, `upload_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`);
       fs.writeFileSync(tempUploadPath, req.file.buffer);
@@ -155,14 +321,14 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
     // Initialize job status
     jobs.set(jobId, {
       status: "processing",
-      step: "tts",
-      progress: 30,
-      audioUrl: null,
+      step: "latentsync", // Start directly on the lip-sync step since audio is already generated!
+      progress: 60,
+      audioUrl: `/uploads/${audioFilename}`,
       videoUrl: null,
       error: null
     });
 
-    // Automatically clean up job after 1 hour to prevent memory leaks
+    // Automatically clean up job after 1 hour
     setTimeout(() => {
       jobs.delete(jobId);
     }, 60 * 60 * 1000);
@@ -176,35 +342,10 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
     // Run the generation pipeline asynchronously in the background
     (async () => {
       try {
-        console.log(`[Job ${jobId}] Step 1/2: Generating audio via Kokoro-82M TTS...`);
-        const audioOutput = await replicate.run(
-          "alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5",
-          {
-            input: {
-              text: text,
-              voice: voice || "af_bella",
-              speed: 1.0,
-            },
-          }
-        );
-
-        const audioUrl = audioOutput.toString();
-        console.log(`[Job ${jobId}] Step 1/2 complete. Audio URL: ${audioUrl}`);
-
-        // Update job status to latentsync step
-        jobs.set(jobId, {
-          status: "processing",
-          step: "latentsync",
-          progress: 70,
-          audioUrl: audioUrl,
-          videoUrl: null,
-          error: null
-        });
-
-        // 3. Process video input based on engine selection
         let finalVideoInput;
         let videoUrl;
 
+        // Sync Labs
         if (lipsyncEngine === "sync_lipsync_2" || lipsyncEngine === "sync_lipsync_2_pro") {
           const modelPath = lipsyncEngine === "sync_lipsync_2_pro" ? "sync/lipsync-2-pro" : "sync/lipsync-2";
           
@@ -220,7 +361,7 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
             {
               input: {
                 video: finalVideoInput,
-                audio: audioUrl,
+                audio: audioBuffer, // Pass local audio buffer directly
                 sync_mode: "loop"
               },
             }
@@ -234,7 +375,7 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
         } else {
           // Default: LatentSync
           console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
-          const audioDuration = await getDuration(audioUrl);
+          const audioDuration = await getDuration(localAudioPath);
           const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
 
           if (processedVideoPath.startsWith("http://") || processedVideoPath.startsWith("https://")) {
@@ -250,7 +391,7 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
             {
               input: {
                 video: finalVideoInput,
-                audio: audioUrl,
+                audio: audioBuffer, // Pass local audio buffer directly
               },
             }
           );
@@ -266,27 +407,26 @@ app.post("/api/generate", upload.single("avatarFile"), async (req, res) => {
           status: "completed",
           step: "done",
           progress: 100,
-          audioUrl: audioUrl,
+          audioUrl: `/uploads/${audioFilename}`,
           videoUrl: videoUrl,
           error: null
         });
 
       } catch (error) {
-        console.error(`[Job ${jobId}] Pipeline failed:`, error);
+        console.error(`[Job ${jobId}] Video generation failed:`, error);
         cleanUpTempFiles(tempFilesToCleanup);
         jobs.set(jobId, {
           status: "failed",
           step: "error",
           progress: 0,
-          audioUrl: null,
+          audioUrl: `/uploads/${audioFilename}`,
           videoUrl: null,
-          error: error.message || "Generation failed."
+          error: error.message || "Video generation failed."
         });
       }
     })();
-
   } catch (error) {
-    console.error("Pipeline generation failed initiation:", error);
+    console.error("Video generation failed initiation:", error);
     return res.status(500).json({
       success: false,
       error: error.message || "An unexpected error occurred during the video generation process.",
