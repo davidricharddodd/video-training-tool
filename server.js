@@ -638,11 +638,11 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
             tempFilesToCleanup.push(loopedVideoPath);
           }
 
-          // Always upscale/scale to at least 512px with even dimensions
+          // Always upscale/scale to at least 720px with even dimensions
           const scaledVideoFilename = `scaled-${jobId}.mp4`;
           const scaledVideoPath = path.join("public", "uploads", scaledVideoFilename);
-          console.log(`[Job ${jobId}] Pre-processing video: upscaling to min 512px height/width with even dimensions...`);
-          await execPromise(`ffmpeg -y -i "${loopedVideoPath}" -vf "scale='trunc(max(512,iw)/2)*2':'trunc(max(512,ih)/2)*2'" -c:v libx264 -pix_fmt yuv420p "${scaledVideoPath}"`);
+          console.log(`[Job ${jobId}] Pre-processing video: upscaling to min 720px height/width with even dimensions...`);
+          await execPromise(`ffmpeg -y -i "${loopedVideoPath}" -vf "scale='if(lt(iw,ih),720,-2)':'if(lt(iw,ih),-2,720)'" -c:v libx264 -pix_fmt yuv420p "${scaledVideoPath}"`);
           tempFilesToCleanup.push(scaledVideoPath);
 
           // 3. Build Public URLs
