@@ -431,10 +431,11 @@ async function startFalPrediction(endpointId, input, apiKey) {
 
 // Helper to poll Fal.ai async queue prediction until completion
 async function pollFalPrediction(endpointId, requestId, apiKey) {
-  const url = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
+  const statusUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
   
   while (true) {
-    const response = await fetch(url, {
+    const response = await fetch(statusUrl, {
       method: "GET",
       headers: {
         "Authorization": `Key ${apiKey}`
@@ -443,14 +444,30 @@ async function pollFalPrediction(endpointId, requestId, apiKey) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Fal.ai polling error (${response.status}): ${errorText}`);
+      throw new Error(`Fal.ai status check error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json();
-    if (data.status === "COMPLETED") {
-      return data;
-    } else if (data.status === "FAILED") {
-      throw new Error(data.error || "Fal.ai prediction failed.");
+    const statusData = await response.json();
+    const status = statusData.status;
+
+    console.log(`[Fal.ai Queue] Job ${requestId} status: ${status}`);
+
+    if (status === "COMPLETED") {
+      const resultResponse = await fetch(resultUrl, {
+        method: "GET",
+        headers: {
+          "Authorization": `Key ${apiKey}`
+        }
+      });
+
+      if (!resultResponse.ok) {
+        const errorText = await resultResponse.text();
+        throw new Error(`Fal.ai result fetch error (${resultResponse.status}): ${errorText}`);
+      }
+
+      return await resultResponse.json();
+    } else if (status === "FAILED") {
+      throw new Error(statusData.error || "Fal.ai prediction failed.");
     }
     
     await new Promise(resolve => setTimeout(resolve, 3000));
