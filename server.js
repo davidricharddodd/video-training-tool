@@ -494,7 +494,7 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
 // Route 2: Generate Lip-Synced Video using Approved Audio
 app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) => {
   try {
-    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, lipsyncProvider, lipsyncEngine } = req.body;
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine } = req.body;
     const provider = lipsyncProvider || "replicate";
 
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
@@ -505,11 +505,11 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
       });
     }
 
-    const falApiKey = process.env.FAL_KEY;
+    const falApiKey = falToken || process.env.FAL_KEY;
     if (provider === "fal" && !falApiKey) {
       return res.status(400).json({
         success: false,
-        error: "Fal.ai API key (FAL_KEY) is not configured in your environment variables. Please add it to your Railway settings.",
+        error: "Fal.ai API key is missing. Please provide it in Developer Settings or configure FAL_KEY in Railway.",
       });
     }
 

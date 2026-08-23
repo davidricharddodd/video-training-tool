@@ -37,10 +37,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const consoleLogs = document.getElementById("consoleLogs");
   const clearLogsBtn = document.getElementById("clearLogsBtn");
 
-  // Initialize: Set local token if saved in localStorage
+  // Initialize: Set local tokens if saved in localStorage
   const savedToken = localStorage.getItem("replicate_token");
   if (savedToken) {
     document.getElementById("customToken").value = savedToken;
+  }
+  const savedFalToken = localStorage.getItem("fal_token");
+  if (savedFalToken) {
+    document.getElementById("falToken").value = savedFalToken;
   }
 
   // Handle upload filename display
@@ -188,6 +192,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const text = scriptText.value;
     const voice = voiceSelect.value;
     const customToken = document.getElementById("customToken").value;
+    const falToken = document.getElementById("falToken").value;
 
     if (!text || text.trim() === "") {
       alert("Please enter a speech script first.");
@@ -198,6 +203,12 @@ document.addEventListener("DOMContentLoaded", () => {
       localStorage.setItem("replicate_token", customToken);
     } else {
       localStorage.removeItem("replicate_token");
+    }
+
+    if (falToken) {
+      localStorage.setItem("fal_token", falToken);
+    } else {
+      localStorage.removeItem("fal_token");
     }
 
     // UI Loading state
@@ -255,11 +266,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const customToken = document.getElementById("customToken").value;
+    const falToken = document.getElementById("falToken").value;
     const avatarType = document.querySelector('input[name="avatarType"]:checked').value;
     const avatarPreset = document.getElementById("avatarPreset").value;
     const avatarUrl = document.getElementById("avatarUrl").value;
     const provider = lipsyncProvider.value;
     const engine = lipsyncEngine.value;
+
+    if (customToken) {
+      localStorage.setItem("replicate_token", customToken);
+    } else {
+      localStorage.removeItem("replicate_token");
+    }
+
+    if (falToken) {
+      localStorage.setItem("fal_token", falToken);
+    } else {
+      localStorage.removeItem("fal_token");
+    }
 
     // Build Form Data to handle potential file uploads
     const formData = new FormData();
@@ -268,6 +292,7 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("lipsyncProvider", provider);
     formData.append("lipsyncEngine", engine);
     formData.append("customToken", customToken);
+    formData.append("falToken", falToken);
 
     if (avatarType === "preset") {
       formData.append("avatarPreset", avatarPreset);
