@@ -272,6 +272,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const avatarUrl = document.getElementById("avatarUrl").value;
     const provider = lipsyncProvider.value;
     const engine = lipsyncEngine.value;
+    const faceEnhancer = document.getElementById("faceEnhancer").checked;
 
     if (customToken) {
       localStorage.setItem("replicate_token", customToken);
@@ -293,6 +294,7 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("lipsyncEngine", engine);
     formData.append("customToken", customToken);
     formData.append("falToken", falToken);
+    formData.append("faceEnhancer", faceEnhancer);
 
     if (avatarType === "preset") {
       formData.append("avatarPreset", avatarPreset);

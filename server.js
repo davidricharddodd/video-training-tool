@@ -494,8 +494,9 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
 // Route 2: Generate Lip-Synced Video using Approved Audio
 app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) => {
   try {
-    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine } = req.body;
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer } = req.body;
     const provider = lipsyncProvider || "replicate";
+    const runFaceEnhancer = faceEnhancer === "true" || faceEnhancer === true;
 
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
     if (provider === "replicate" && !apiToken) {
@@ -504,12 +505,24 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
         error: "Replicate API Token is missing.",
       });
     }
+    if (runFaceEnhancer && provider === "replicate" && !apiToken) {
+      return res.status(400).json({
+        success: false,
+        error: "Replicate API Token is required to run GFPGAN Face Restoration. Please provide it in Developer Settings or configure REPLICATE_API_TOKEN.",
+      });
+    }
 
     const falApiKey = falToken || process.env.FAL_KEY;
     if (provider === "fal" && !falApiKey) {
       return res.status(400).json({
         success: false,
         error: "Fal.ai API key is missing. Please provide it in Developer Settings or configure FAL_KEY in Railway.",
+      });
+    }
+    if (runFaceEnhancer && provider === "fal" && !falApiKey) {
+      return res.status(400).json({
+        success: false,
+        error: "Fal.ai API Key is required to run Topaz Video AI Face Enhancement. Please provide it in Developer Settings or configure FAL_KEY.",
       });
     }
 
@@ -806,6 +819,37 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
             addJobLog(jobId, `Step 2/2 complete. Video URL: ${videoUrl}`);
 
             cleanUpTempFiles(tempFilesToCleanup);
+          }
+        }
+
+        // 4. Post-processing Face Enhancer (if requested)
+        if (runFaceEnhancer && videoUrl) {
+          const publicInputUrl = videoUrl.startsWith("/uploads/") ? `${protocol}://${host}${videoUrl}` : videoUrl;
+          
+          if (provider === "fal") {
+            addJobLog(jobId, `Running post-processing: Topaz Video AI Face Preservation & Upscale on Fal.ai...`);
+            const queueInfo = await startFalPrediction(
+              "fal-ai/topaz/upscale/video/precision",
+              { video_url: publicInputUrl },
+              falApiKey
+            );
+            const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+            videoUrl = result.video ? result.video.url : result.output;
+            addJobLog(jobId, `Topaz Video AI complete. Enhanced video URL: ${videoUrl}`);
+          } else {
+            addJobLog(jobId, `Running post-processing: GFPGAN Video Face Restoration on Replicate...`);
+            const gfpganOutput = await replicate.run(
+              "pbarker/gfpgan-video:ea1116ce24126a411c7beb092e587bee24b25525c1b0e493e3a907904952ace3",
+              {
+                input: {
+                  video: publicInputUrl,
+                  version: "v1.4",
+                  scale: 2
+                }
+              }
+            );
+            videoUrl = gfpganOutput.toString();
+            addJobLog(jobId, `GFPGAN Face restoration complete. Enhanced video URL: ${videoUrl}`);
           }
         }
 
