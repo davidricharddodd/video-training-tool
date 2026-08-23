@@ -147,9 +147,9 @@ document.addEventListener("DOMContentLoaded", () => {
     preset_female_2: "/presets/female_2.mp4",
     preset_female_3: "/presets/female_3.mp4",
     preset_female_4: "/presets/female_4.mp4",
+    preset_female_5: "/presets/female_5.mp4",
     preset_male_1: "/presets/male_1.mp4",
-    preset_male_2: "/presets/male_2.mp4",
-    preset_male_3: "/presets/male_3.mp4"
+    preset_male_2: "/presets/male_2.mp4"
   };
 
   // Change preset preview when selection changes

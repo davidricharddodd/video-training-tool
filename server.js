@@ -815,9 +815,9 @@ app.post("/api/generate-video", upload.fields([
         preset_female_2: "public/presets/female_2.mp4",
         preset_female_3: "public/presets/female_3.mp4",
         preset_female_4: "public/presets/female_4.mp4",
+        preset_female_5: "public/presets/female_5.mp4",
         preset_male_1: "public/presets/male_1.mp4",
-        preset_male_2: "public/presets/male_2.mp4",
-        preset_male_3: "public/presets/male_3.mp4"
+        preset_male_2: "public/presets/male_2.mp4"
       };
       rawVideoPath = presetUrls[avatarPreset] || presetUrls.preset_female_1;
     }
