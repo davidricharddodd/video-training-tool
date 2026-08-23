@@ -426,14 +426,15 @@ async function startFalPrediction(endpointId, input, apiKey) {
   }
 
   const data = await response.json();
-  return data.request_id;
+  return {
+    requestId: data.request_id,
+    statusUrl: data.status_url,
+    responseUrl: data.response_url
+  };
 }
 
 // Helper to poll Fal.ai async queue prediction until completion
-async function pollFalPrediction(endpointId, requestId, apiKey) {
-  const statusUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}/status`;
-  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
-  
+async function pollFalPrediction(statusUrl, responseUrl, apiKey) {
   while (true) {
     const response = await fetch(statusUrl, {
       method: "GET",
@@ -450,10 +451,10 @@ async function pollFalPrediction(endpointId, requestId, apiKey) {
     const statusData = await response.json();
     const status = statusData.status;
 
-    console.log(`[Fal.ai Queue] Job ${requestId} status: ${status}`);
+    console.log(`[Fal.ai Queue] Status: ${status}`);
 
     if (status === "COMPLETED") {
-      const resultResponse = await fetch(resultUrl, {
+      const resultResponse = await fetch(responseUrl, {
         method: "GET",
         headers: {
           "Authorization": `Key ${apiKey}`
@@ -662,13 +663,13 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
                 const publicSegVideoUrl = `${protocol}://${host}/uploads/${videoSegFilename}`;
 
                 console.log(`[Job ${jobId}] Dispatching Kling segment ${i + 1}/${numSegments} (${duration}s)...`);
-                const reqId = await startFalPrediction(
+                const queueInfo = await startFalPrediction(
                   endpointId,
                   { video_url: publicSegVideoUrl, audio_url: publicSegAudioUrl },
                   falApiKey
                 );
 
-                const result = await pollFalPrediction(endpointId, reqId, falApiKey);
+                const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey);
                 const outUrl = result.video ? result.video.url : result.output;
                 if (!outUrl) {
                   throw new Error(`Kling segment prediction ${i + 1} did not return a valid video URL.`);
@@ -706,15 +707,15 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
 
           } else {
             // Standard single-run prediction for shorter assets or alternative engines
-            console.log(`[Job ${jobId}] Running single Fal.ai prediction using model ${endpointId}...`);
-            const reqId = await startFalPrediction(
-              endpointId,
-              { video_url: publicVideoUrl, audio_url: publicAudioUrl, sync_mode: "loop" },
-              falApiKey
-            );
-            const result = await pollFalPrediction(endpointId, reqId, falApiKey);
-            videoUrl = result.video ? result.video.url : result.output;
-            console.log(`[Job ${jobId}] Fal.ai run complete. Video URL: ${videoUrl}`);
+             console.log(`[Job ${jobId}] Running single Fal.ai prediction using model ${endpointId}...`);
+             const queueInfo = await startFalPrediction(
+               endpointId,
+               { video_url: publicVideoUrl, audio_url: publicAudioUrl, sync_mode: "loop" },
+               falApiKey
+             );
+             const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey);
+             videoUrl = result.video ? result.video.url : result.output;
+             console.log(`[Job ${jobId}] Fal.ai run complete. Video URL: ${videoUrl}`);
           }
 
           cleanUpTempFiles(tempFilesToCleanup);
