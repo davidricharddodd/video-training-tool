@@ -206,38 +206,35 @@ function splitTextIntoChunks(text, maxChars = 250) {
       continue;
     }
 
-    // Split text by paragraphs first
-    const lines = part.content.split(/\n+/);
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (!trimmedLine) continue;
+    // Normalize line breaks and extra spaces within each text part
+    const cleanContent = part.content.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
+    if (!cleanContent) continue;
 
-      // If line is short, add it directly
-      if (trimmedLine.length <= maxChars) {
-        finalParts.push({ type: "text", content: trimmedLine });
-        continue;
-      }
+    // If clean text is short, add it directly
+    if (cleanContent.length <= maxChars) {
+      finalParts.push({ type: "text", content: cleanContent });
+      continue;
+    }
 
-      // Split long line by sentences (., !, ?)
-      const sentences = trimmedLine.match(/[^.!?]+[.!?]*/g) || [trimmedLine];
-      let currentChunk = "";
+    // Split long line by sentences (., !, ?)
+    const sentences = cleanContent.match(/[^.!?]+[.!?]*/g) || [cleanContent];
+    let currentChunk = "";
 
-      for (let sentence of sentences) {
-        sentence = sentence.trim();
-        if (!sentence) continue;
+    for (let sentence of sentences) {
+      sentence = sentence.trim();
+      if (!sentence) continue;
 
-        if ((currentChunk + " " + sentence).trim().length <= maxChars) {
-          currentChunk = (currentChunk + " " + sentence).trim();
-        } else {
-          if (currentChunk) {
-            finalParts.push({ type: "text", content: currentChunk });
-          }
-          currentChunk = sentence;
+      if ((currentChunk + " " + sentence).trim().length <= maxChars) {
+        currentChunk = (currentChunk + " " + sentence).trim();
+      } else {
+        if (currentChunk) {
+          finalParts.push({ type: "text", content: currentChunk });
         }
+        currentChunk = sentence;
       }
-      if (currentChunk) {
-        finalParts.push({ type: "text", content: currentChunk });
-      }
+    }
+    if (currentChunk) {
+      finalParts.push({ type: "text", content: currentChunk });
     }
   }
   return finalParts;
