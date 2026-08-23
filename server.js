@@ -21,6 +21,147 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Auth Middleware
+app.use((req, res, next) => {
+  // Allow login page, assets, and api login endpoint without authentication
+  if (req.path === "/login" || req.path === "/api/login" || req.path === "/favicon.ico" || req.path.startsWith("/uploads/")) {
+    return next();
+  }
+
+  const cookies = req.headers.cookie ? Object.fromEntries(req.headers.cookie.split("; ").map(c => {
+    const parts = c.split("=");
+    return [parts[0], parts.slice(1).join("=")];
+  })) : {};
+
+  const token = cookies.auth_token;
+  const expectedPassword = process.env.APP_PASSWORD || "1234";
+  const expectedToken = Buffer.from(`admin:${expectedPassword}`).toString("base64");
+
+  if (token === expectedToken) {
+    return next();
+  }
+
+  // Redirect to login page
+  return res.redirect("/login");
+});
+
+// GET Login Page
+app.get("/login", (req, res) => {
+  const cookies = req.headers.cookie ? Object.fromEntries(req.headers.cookie.split("; ").map(c => {
+    const parts = c.split("=");
+    return [parts[0], parts.slice(1).join("=")];
+  })) : {};
+  const token = cookies.auth_token;
+  const expectedPassword = process.env.APP_PASSWORD || "1234";
+  const expectedToken = Buffer.from(`admin:${expectedPassword}`).toString("base64");
+
+  if (token === expectedToken) {
+    return res.redirect("/");
+  }
+
+  res.send(`
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login | AI Video Training Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="h-full flex items-center justify-center relative overflow-hidden font-sans">
+  <!-- Neon Background Glows -->
+  <div class="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-violet-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+  <div class="absolute bottom-1/4 right-1/4 translate-x-1/2 translate-y-1/2 w-96 h-96 bg-fuchsia-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+
+  <div class="w-full max-w-md p-8 bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl shadow-2xl rounded-2xl relative z-10 mx-4">
+    <div class="flex flex-col items-center mb-8">
+      <div class="h-12 w-12 rounded-xl bg-gradient-to-tr from-violet-600 to-fuchsia-600 flex items-center justify-center shadow-lg shadow-violet-900/30 mb-4">
+        <svg class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+      </div>
+      <h2 class="text-2xl font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">Welcome Back</h2>
+      <p class="text-xs text-slate-500 mt-1 font-medium font-mono">admin @ AI Video Training Tool</p>
+    </div>
+
+    <form id="loginForm" class="space-y-4">
+      <div>
+        <label for="username" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Username</label>
+        <input type="text" id="username" name="username" required 
+          class="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200" />
+      </div>
+
+      <div>
+        <label for="password" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Password</label>
+        <input type="password" id="password" name="password" required 
+          class="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200" />
+      </div>
+
+      <div id="errorMessage" class="text-rose-400 text-xs font-semibold hidden text-center pt-1"></div>
+
+      <button type="submit" class="w-full py-3 px-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-violet-950/20 hover:shadow-violet-500/10 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-950 transition-all duration-200 flex items-center justify-center space-x-2">
+        <span>Log In</span>
+      </button>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById("loginForm");
+    const errorMsg = document.getElementById("errorMessage");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorMsg.classList.add("hidden");
+      
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+
+      try {
+        const response = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          // Set cookie manually
+          document.cookie = "auth_token=" + data.token + "; path=/; max-age=86400; SameSite=Strict";
+          window.location.href = "/";
+        } else {
+          errorMsg.textContent = data.error || "Invalid username or password.";
+          errorMsg.classList.remove("hidden");
+        }
+      } catch (err) {
+        errorMsg.textContent = "An error occurred. Please try again.";
+        errorMsg.classList.remove("hidden");
+      }
+    });
+  </script>
+</body>
+</html>
+  `);
+});
+
+// POST Login API
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+  const expectedPassword = process.env.APP_PASSWORD || "1234";
+
+  if (username === "admin" && password === expectedPassword) {
+    const token = Buffer.from(`admin:${expectedPassword}`).toString("base64");
+    return res.status(200).json({
+      success: true,
+      token: token
+    });
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: "Invalid username or password."
+  });
+});
+
 // Serve static frontend files from 'public' directory
 app.use(express.static("public"));
 
