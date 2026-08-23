@@ -717,19 +717,23 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
     } else {
       // Preset Selection
       const presetUrls = {
-        preset_female_1: "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo1_video.mp4",
-        preset_male_1: "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo2_video.mp4",
-        preset_female_2: "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo3_video.mp4",
-        preset_female_3: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/tys/gt.mp4",
-        preset_speaker_4: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/10/gt.mp4",
-        preset_speaker_5: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/3/gt.mp4",
-        preset_speaker_6: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/5/gt.mp4",
-        preset_speaker_7: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/7/gt.mp4",
-        preset_speaker_8: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/9/gt.mp4",
-        preset_speaker_9: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/11/gt.mp4",
-        preset_speaker_10: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/13/gt.mp4",
-        preset_speaker_11: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/15/gt.mp4",
-        preset_speaker_12: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l5/gt.mp4"
+        preset_female_1: "public/presets/female_1.mp4",
+        preset_male_1: "public/presets/male_1.mp4",
+        preset_female_2: "public/presets/female_2.mp4",
+        preset_female_3: "public/presets/female_3.mp4",
+        preset_female_4: "public/presets/female_4.mp4",
+        preset_female_5: "public/presets/female_5.mp4",
+        preset_male_2: "public/presets/male_2.mp4",
+        preset_male_3: "public/presets/male_3.mp4",
+        preset_speaker_4: "public/presets/speaker_4.mp4",
+        preset_speaker_5: "public/presets/speaker_5.mp4",
+        preset_speaker_6: "public/presets/speaker_6.mp4",
+        preset_speaker_7: "public/presets/speaker_7.mp4",
+        preset_speaker_8: "public/presets/speaker_8.mp4",
+        preset_speaker_9: "public/presets/speaker_9.mp4",
+        preset_speaker_10: "public/presets/speaker_10.mp4",
+        preset_speaker_11: "public/presets/speaker_11.mp4",
+        preset_speaker_12: "public/presets/speaker_12.mp4"
       };
       rawVideoPath = presetUrls[avatarPreset] || presetUrls.preset_female_1;
     }

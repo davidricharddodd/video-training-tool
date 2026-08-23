@@ -111,19 +111,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Map presets to their raw video URLs for frontend previewing
   const presetVideoUrls = {
-    preset_female_1: "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo1_video.mp4",
-    preset_male_1: "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo2_video.mp4",
-    preset_female_2: "https://raw.githubusercontent.com/bytedance/LatentSync/main/assets/demo3_video.mp4",
-    preset_female_3: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/tys/gt.mp4",
-    preset_speaker_4: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/short_case/10/gt.mp4",
-    preset_speaker_5: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/3/gt.mp4",
-    preset_speaker_6: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/5/gt.mp4",
-    preset_speaker_7: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/7/gt.mp4",
-    preset_speaker_8: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/9/gt.mp4",
-    preset_speaker_9: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/11/gt.mp4",
-    preset_speaker_10: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/13/gt.mp4",
-    preset_speaker_11: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/15/gt.mp4",
-    preset_speaker_12: "https://raw.githubusercontent.com/tencent-ailab/V-Express/main/test_samples/vasa-1/l5/gt.mp4"
+    preset_female_1: "/presets/female_1.mp4",
+    preset_male_1: "/presets/male_1.mp4",
+    preset_female_2: "/presets/female_2.mp4",
+    preset_female_3: "/presets/female_3.mp4",
+    preset_female_4: "/presets/female_4.mp4",
+    preset_female_5: "/presets/female_5.mp4",
+    preset_male_2: "/presets/male_2.mp4",
+    preset_male_3: "/presets/male_3.mp4",
+    preset_speaker_4: "/presets/speaker_4.mp4",
+    preset_speaker_5: "/presets/speaker_5.mp4",
+    preset_speaker_6: "/presets/speaker_6.mp4",
+    preset_speaker_7: "/presets/speaker_7.mp4",
+    preset_speaker_8: "/presets/speaker_8.mp4",
+    preset_speaker_9: "/presets/speaker_9.mp4",
+    preset_speaker_10: "/presets/speaker_10.mp4",
+    preset_speaker_11: "/presets/speaker_11.mp4",
+    preset_speaker_12: "/presets/speaker_12.mp4"
   };
 
   // Change preset preview when selection changes
