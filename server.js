@@ -417,7 +417,7 @@ async function startFalPrediction(endpointId, input, apiKey) {
       "Authorization": `Key ${apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ input })
+    body: JSON.stringify(input)
   });
 
   if (!response.ok) {
