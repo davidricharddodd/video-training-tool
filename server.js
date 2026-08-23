@@ -617,27 +617,42 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
           };
           const endpointId = falEndpoints[lipsyncEngine] || falEndpoints.fal_kling;
 
-          const publicAudioUrl = `${protocol}://${host}/uploads/${audioFilename}`;
-          let publicVideoUrl;
+          const audioDuration = await getDuration(localAudioPath);
 
+          // 1. Resolve Local Video Source
+          let localVideoInputPath;
           if (rawVideoPath.startsWith("http://") || rawVideoPath.startsWith("https://")) {
-            publicVideoUrl = rawVideoPath;
+            console.log(`[Job ${jobId}] Downloading remote avatar video locally to pre-process...`);
+            const downloadedFilename = `downloaded_${jobId}.mp4`;
+            const downloadedPath = path.join("public", "uploads", downloadedFilename);
+            await downloadFile(rawVideoPath, downloadedPath);
+            tempFilesToCleanup.push(downloadedPath);
+            localVideoInputPath = downloadedPath;
           } else {
-            publicVideoUrl = `${protocol}://${host}/uploads/${path.basename(rawVideoPath)}`;
+            localVideoInputPath = rawVideoPath;
           }
 
-          const audioDuration = await getDuration(localAudioPath);
+          // 2. Pre-process Input Video (Looping + Upscaling to min 512px even dimensions)
+          const loopedVideoPath = await loopVideoIfNeeded(localVideoInputPath, audioDuration);
+          if (loopedVideoPath !== localVideoInputPath) {
+            tempFilesToCleanup.push(loopedVideoPath);
+          }
+
+          // Always upscale/scale to at least 512px with even dimensions
+          const scaledVideoFilename = `scaled-${jobId}.mp4`;
+          const scaledVideoPath = path.join("public", "uploads", scaledVideoFilename);
+          console.log(`[Job ${jobId}] Pre-processing video: upscaling to min 512px height/width with even dimensions...`);
+          await execPromise(`ffmpeg -y -i "${loopedVideoPath}" -vf "scale='trunc(max(512,iw)/2)*2':'trunc(max(512,ih)/2)*2'" -c:v libx264 -pix_fmt yuv420p "${scaledVideoPath}"`);
+          tempFilesToCleanup.push(scaledVideoPath);
+
+          // 3. Build Public URLs
+          const publicAudioUrl = `${protocol}://${host}/uploads/${audioFilename}`;
+          const publicVideoUrl = `${protocol}://${host}/uploads/${scaledVideoFilename}`;
 
           // Auto-Splitting Kling Pipeline (only if lipsyncEngine is fal_kling and duration > 60s)
           if (lipsyncEngine === "fal_kling" && audioDuration > 60) {
             console.log(`[Job ${jobId}] Kling Auto-Splitting enabled. Duration: ${audioDuration}s. Slicing into 60s segments...`);
             
-            // Loop video first to match the audio length
-            const loopedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
-            if (loopedVideoPath !== rawVideoPath) {
-              tempFilesToCleanup.push(loopedVideoPath);
-            }
-
             const numSegments = Math.ceil(audioDuration / 60);
             const segmentPromises = [];
 
@@ -651,10 +666,10 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
               await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${localAudioPath}" "${audioSegPath}"`);
               tempFilesToCleanup.push(audioSegPath);
 
-              // Slice video segment
+              // Slice video segment (transcoding to ensure correct keyframe alignments!)
               const videoSegFilename = `vid_seg_${jobId}_${i}.mp4`;
               const videoSegPath = path.join("public", "uploads", videoSegFilename);
-              await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${loopedVideoPath}" "${videoSegPath}"`);
+              await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${scaledVideoPath}" -c:v libx264 -pix_fmt yuv420p -c:a aac "${videoSegPath}"`);
               tempFilesToCleanup.push(videoSegPath);
 
               // Dispatch segment to Fal.ai Kling
