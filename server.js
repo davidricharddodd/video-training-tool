@@ -32,6 +32,17 @@ if (!fs.existsSync("public/uploads")) {
 // In-memory job status store
 const jobs = new Map();
 
+// Helper to append progress logs to an active job
+const addJobLog = (jobId, message) => {
+  const job = jobs.get(jobId);
+  if (job) {
+    if (!job.logs) job.logs = [];
+    const timestamp = new Date().toLocaleTimeString();
+    job.logs.push(`[${timestamp}] ${message}`);
+    console.log(`[Job ${jobId}] ${message}`);
+  }
+};
+
 // Lightweight JSON-based database for session/run history
 class HistoryDB {
   constructor(filePath) {
@@ -434,7 +445,8 @@ async function startFalPrediction(endpointId, input, apiKey) {
 }
 
 // Helper to poll Fal.ai async queue prediction until completion
-async function pollFalPrediction(statusUrl, responseUrl, apiKey) {
+async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
+  let lastStatus = null;
   while (true) {
     const response = await fetch(statusUrl, {
       method: "GET",
@@ -451,7 +463,14 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey) {
     const statusData = await response.json();
     const status = statusData.status;
 
-    console.log(`[Fal.ai Queue] Status: ${status}`);
+    if (status !== lastStatus) {
+      if (jobId) {
+        addJobLog(jobId, `Fal.ai Queue Status: ${status}`);
+      } else {
+        console.log(`[Fal.ai Queue] Status: ${status}`);
+      }
+      lastStatus = status;
+    }
 
     if (status === "COMPLETED") {
       const resultResponse = await fetch(responseUrl, {
@@ -586,7 +605,8 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
       progress: 60,
       audioUrl: `/uploads/${audioFilename}`,
       videoUrl: null,
-      error: null
+      error: null,
+      logs: []
     });
 
     // Automatically clean up job after 1 hour
@@ -608,7 +628,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
 
         // Fal.ai Provider Branch
         if (provider === "fal") {
-          console.log(`[Job ${jobId}] Running Fal.ai pipeline...`);
+          addJobLog(jobId, `Running Fal.ai pipeline...`);
           
           const falEndpoints = {
             fal_kling: "fal-ai/kling-video/lipsync/audio-to-video",
@@ -622,7 +642,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
           // 1. Resolve Local Video Source
           let localVideoInputPath;
           if (rawVideoPath.startsWith("http://") || rawVideoPath.startsWith("https://")) {
-            console.log(`[Job ${jobId}] Downloading remote avatar video locally to pre-process...`);
+            addJobLog(jobId, `Downloading remote avatar video locally to pre-process...`);
             const downloadedFilename = `downloaded_${jobId}.mp4`;
             const downloadedPath = path.join("public", "uploads", downloadedFilename);
             await downloadFile(rawVideoPath, downloadedPath);
@@ -641,7 +661,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
           // Always upscale/scale to at least 720px with even dimensions
           const scaledVideoFilename = `scaled-${jobId}.mp4`;
           const scaledVideoPath = path.join("public", "uploads", scaledVideoFilename);
-          console.log(`[Job ${jobId}] Pre-processing video: upscaling to min 720px height/width with even dimensions...`);
+          addJobLog(jobId, `Pre-processing video: upscaling to min 720px height/width with even dimensions...`);
           await execPromise(`ffmpeg -y -i "${loopedVideoPath}" -vf "scale='if(lt(iw,ih),720,-2)':'if(lt(iw,ih),-2,720)'" -c:v libx264 -pix_fmt yuv420p "${scaledVideoPath}"`);
           tempFilesToCleanup.push(scaledVideoPath);
 
@@ -651,7 +671,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
 
           // Auto-Splitting Kling Pipeline (only if lipsyncEngine is fal_kling and duration > 60s)
           if (lipsyncEngine === "fal_kling" && audioDuration > 60) {
-            console.log(`[Job ${jobId}] Kling Auto-Splitting enabled. Duration: ${audioDuration}s. Slicing into 60s segments...`);
+            addJobLog(jobId, `Kling Auto-Splitting enabled. Duration: ${audioDuration}s. Slicing into 60s segments...`);
             
             const numSegments = Math.ceil(audioDuration / 60);
             const segmentPromises = [];
@@ -677,14 +697,14 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
                 const publicSegAudioUrl = `${protocol}://${host}/uploads/${audioSegFilename}`;
                 const publicSegVideoUrl = `${protocol}://${host}/uploads/${videoSegFilename}`;
 
-                console.log(`[Job ${jobId}] Dispatching Kling segment ${i + 1}/${numSegments} (${duration}s)...`);
+                addJobLog(jobId, `Dispatching Kling segment ${i + 1}/${numSegments} (${duration}s)...`);
                 const queueInfo = await startFalPrediction(
                   endpointId,
                   { video_url: publicSegVideoUrl, audio_url: publicSegAudioUrl },
                   falApiKey
                 );
 
-                const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey);
+                const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
                 const outUrl = result.video ? result.video.url : result.output;
                 if (!outUrl) {
                   throw new Error(`Kling segment prediction ${i + 1} did not return a valid video URL.`);
@@ -704,7 +724,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
             const completedSegs = await Promise.all(segmentPromises);
 
             // Stitch segments using ffmpeg complex filter concat
-            console.log(`[Job ${jobId}] Stitching ${completedSegs.length} Kling segments together...`);
+            addJobLog(jobId, `Stitching ${completedSegs.length} Kling segments together...`);
             let ffmpegArgs = [];
             let filterInputs = "";
             for (let i = 0; i < completedSegs.length; i++) {
@@ -718,19 +738,19 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
             await execPromise(`ffmpeg -y ${ffmpegArgs.join(" ")} -filter_complex ${filterComplex} -map "[v]" -map "[a]" "${finalStitchedPath}"`);
             
             videoUrl = `/uploads/${stitchedFilename}`;
-            console.log(`[Job ${jobId}] Kling Auto-Stitching complete. Local URL: ${videoUrl}`);
+            addJobLog(jobId, `Kling Auto-Stitching complete. Local URL: ${videoUrl}`);
 
           } else {
             // Standard single-run prediction for shorter assets or alternative engines
-             console.log(`[Job ${jobId}] Running single Fal.ai prediction using model ${endpointId}...`);
+             addJobLog(jobId, `Running single Fal.ai prediction using model ${endpointId}...`);
              const queueInfo = await startFalPrediction(
                endpointId,
                { video_url: publicVideoUrl, audio_url: publicAudioUrl, sync_mode: "loop" },
                falApiKey
              );
-             const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey);
+             const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
              videoUrl = result.video ? result.video.url : result.output;
-             console.log(`[Job ${jobId}] Fal.ai run complete. Video URL: ${videoUrl}`);
+             addJobLog(jobId, `Fal.ai run complete. Video URL: ${videoUrl}`);
           }
 
           cleanUpTempFiles(tempFilesToCleanup);
@@ -746,7 +766,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
               finalVideoInput = fs.readFileSync(rawVideoPath);
             }
 
-            console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via Sync Labs (${modelPath})...`);
+            addJobLog(jobId, `Step 2/2: Generating lip-sync video via Sync Labs (${modelPath})...`);
             const videoOutput = await replicate.run(
               modelPath,
               {
@@ -758,13 +778,13 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
               }
             );
             videoUrl = videoOutput.toString();
-            console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+            addJobLog(jobId, `Step 2/2 complete. Video URL: ${videoUrl}`);
 
             cleanUpTempFiles(tempFilesToCleanup);
 
           } else {
             // Default: LatentSync
-            console.log(`[Job ${jobId}] Inspecting media durations for loop matching...`);
+            addJobLog(jobId, `Inspecting media durations for loop matching...`);
             const audioDuration = await getDuration(localAudioPath);
             const processedVideoPath = await loopVideoIfNeeded(rawVideoPath, audioDuration);
 
@@ -775,7 +795,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
               tempFilesToCleanup.push(processedVideoPath); // Queue for cleanup
             }
 
-            console.log(`[Job ${jobId}] Step 2/2: Generating lip-sync video via LatentSync...`);
+            addJobLog(jobId, `Step 2/2: Generating lip-sync video via LatentSync...`);
             const videoOutput = await replicate.run(
               "bytedance/latentsync:637ce1919f807ca20da3a448ddc2743535d2853649574cd52a933120e9b9e293",
               {
@@ -786,7 +806,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
               }
             );
             videoUrl = videoOutput.toString();
-            console.log(`[Job ${jobId}] Step 2/2 complete. Video URL: ${videoUrl}`);
+            addJobLog(jobId, `Step 2/2 complete. Video URL: ${videoUrl}`);
 
             cleanUpTempFiles(tempFilesToCleanup);
           }

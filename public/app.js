@@ -317,6 +317,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Start polling the job status
       let lastStep = "init";
+      let lastLogIndex = 0;
       const pollInterval = setInterval(async () => {
         try {
           const pollResponse = await fetch(`/api/jobs/${jobId}`);
@@ -329,6 +330,15 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           
           const job = pollData.job;
+
+          // Stream backend logs to frontend console
+          if (job.logs && job.logs.length > lastLogIndex) {
+            for (let i = lastLogIndex; i < job.logs.length; i++) {
+              const cleanMsg = job.logs[i].replace(/^\[\d{1,2}:\d{2}:\d{2}\]\s*/, "");
+              logMessage(cleanMsg);
+            }
+            lastLogIndex = job.logs.length;
+          }
           
           if (job.status === "processing") {
             if (job.step !== lastStep) {
