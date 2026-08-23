@@ -20,6 +20,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const avatarFile = document.getElementById("avatarFile");
   const uploadFilename = document.getElementById("uploadFilename");
 
+  // Branding Elements
+  const logoFile = document.getElementById("logoFile");
+  const logoFilename = document.getElementById("logoFilename");
+  const logoPosition = document.getElementById("logoPosition");
+  const bgFile = document.getElementById("bgFile");
+  const bgFilename = document.getElementById("bgFilename");
+  const bgPresenterAlign = document.getElementById("bgPresenterAlign");
+
   // Output containers
   const idleState = document.getElementById("idleState");
   const progressState = document.getElementById("progressState");
@@ -57,6 +65,30 @@ document.addEventListener("DOMContentLoaded", () => {
       uploadFilename.textContent = "Click to select MP4 video";
       uploadFilename.classList.remove("text-violet-400", "font-semibold");
       uploadFilename.classList.add("text-slate-400");
+    }
+  });
+
+  logoFile.addEventListener("change", (e) => {
+    if (e.target.files.length > 0) {
+      logoFilename.textContent = `Selected: ${e.target.files[0].name}`;
+      logoFilename.classList.remove("text-slate-400");
+      logoFilename.classList.add("text-violet-400", "font-semibold");
+    } else {
+      logoFilename.textContent = "Select logo image";
+      logoFilename.classList.remove("text-violet-400", "font-semibold");
+      logoFilename.classList.add("text-slate-400");
+    }
+  });
+
+  bgFile.addEventListener("change", (e) => {
+    if (e.target.files.length > 0) {
+      bgFilename.textContent = `Selected: ${e.target.files[0].name}`;
+      bgFilename.classList.remove("text-slate-400");
+      bgFilename.classList.add("text-violet-400", "font-semibold");
+    } else {
+      bgFilename.textContent = "Select background image";
+      bgFilename.classList.remove("text-violet-400", "font-semibold");
+      bgFilename.classList.add("text-slate-400");
     }
   });
 
@@ -299,6 +331,15 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("customToken", customToken);
     formData.append("falToken", falToken);
     formData.append("faceEnhancer", faceEnhancer);
+    formData.append("logoPosition", logoPosition.value);
+    formData.append("bgPresenterAlign", bgPresenterAlign.value);
+
+    if (logoFile.files.length > 0) {
+      formData.append("logoFile", logoFile.files[0]);
+    }
+    if (bgFile.files.length > 0) {
+      formData.append("bgFile", bgFile.files[0]);
+    }
 
     if (avatarType === "preset") {
       formData.append("avatarPreset", avatarPreset);

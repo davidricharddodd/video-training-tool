@@ -244,6 +244,74 @@ const upload = multer({
   },
 });
 
+// Helper to apply branded background and logo watermarks using FFmpeg
+function applyBrandingAndWatermark(inputVideoPath, bgPath, bgPresenterAlign, logoPath, logoPosition, outputVideoPath) {
+  return new Promise((resolve, reject) => {
+    if (!bgPath && !logoPath) {
+      fs.copyFileSync(inputVideoPath, outputVideoPath);
+      return resolve();
+    }
+
+    const inputs = [];
+    const filterParts = [];
+    let audioMap = "-map 0:a";
+
+    if (bgPath) {
+      inputs.push(`-i "${bgPath}"`);
+      inputs.push(`-i "${inputVideoPath}"`);
+      audioMap = "-map 1:a";
+
+      let xPos = "W-w-100";
+      if (bgPresenterAlign === "left") xPos = "100";
+      else if (bgPresenterAlign === "center") xPos = "(W-w)/2";
+
+      filterParts.push(`[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080[bg]`);
+      filterParts.push(`[1:v]scale=-2:1080[fg]`);
+      
+      if (logoPath) {
+        inputs.push(`-i "${logoPath}"`);
+        filterParts.push(`[bg][fg]overlay=x=${xPos}:y=(H-h)/2[tmp]`);
+        filterParts.push(`[2:v]scale=180:-1[logo]`);
+        
+        let logoOverlay = "W-w-20:20";
+        if (logoPosition === "top_left") logoOverlay = "20:20";
+        else if (logoPosition === "bottom_right") logoOverlay = "W-w-20:H-h-20";
+        else if (logoPosition === "bottom_left") logoOverlay = "20:H-h-20";
+
+        filterParts.push(`[tmp][logo]overlay=${logoOverlay}[outv]`);
+      } else {
+        filterParts.push(`[bg][fg]overlay=x=${xPos}:y=(H-h)/2[outv]`);
+      }
+    } else if (logoPath) {
+      inputs.push(`-i "${inputVideoPath}"`);
+      inputs.push(`-i "${logoPath}"`);
+      audioMap = "-map 0:a";
+
+      filterParts.push(`[1:v]scale=180:-1[logo]`);
+      
+      let logoOverlay = "W-w-20:20";
+      if (logoPosition === "top_left") logoOverlay = "20:20";
+      else if (logoPosition === "bottom_right") logoOverlay = "W-w-20:H-h-20";
+      else if (logoPosition === "bottom_left") logoOverlay = "20:H-h-20";
+
+      filterParts.push(`[0:v][logo]overlay=${logoOverlay}[outv]`);
+    }
+
+    const filterComplex = `-filter_complex "${filterParts.join('; ')}" -map "[outv]" ${audioMap}`;
+    const command = `ffmpeg -y ${inputs.join(' ')} ${filterComplex} -c:v libx264 -c:a aac -pix_fmt yuv420p "${outputVideoPath}"`;
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error("FFmpeg branding error:", error);
+        console.error("FFmpeg stderr:", stderr);
+        return reject(error);
+      }
+      resolve();
+    });
+  });
+}
+
+
 // Helper to get media duration using ffprobe
 async function getDuration(mediaPath) {
   const { stdout } = await execPromise(
@@ -633,9 +701,13 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
 }
 
 // Route 2: Generate Lip-Synced Video using Approved Audio
-app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) => {
+app.post("/api/generate-video", upload.fields([
+  { name: "avatarFile", maxCount: 1 },
+  { name: "logoFile", maxCount: 1 },
+  { name: "bgFile", maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer } = req.body;
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer, logoPosition, bgPresenterAlign } = req.body;
     const provider = lipsyncProvider || "replicate";
     const runFaceEnhancer = faceEnhancer === "true" || faceEnhancer === true;
 
@@ -694,8 +766,30 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
     const host = req.get("host");
     const protocol = req.protocol;
 
+    const avatarFile = req.files && req.files.avatarFile ? req.files.avatarFile[0] : null;
+    const logoFile = req.files && req.files.logoFile ? req.files.logoFile[0] : null;
+    const bgFile = req.files && req.files.bgFile ? req.files.bgFile[0] : null;
+
+    let logoPath = null;
+    if (logoFile) {
+      const logoFilenameExt = logoFile.originalname.split(".").pop() || "png";
+      const tempLogoFilename = `logo_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${logoFilenameExt}`;
+      logoPath = path.join("public", "uploads", tempLogoFilename);
+      fs.writeFileSync(logoPath, logoFile.buffer);
+      tempFilesToCleanup.push(logoPath);
+    }
+
+    let bgPath = null;
+    if (bgFile) {
+      const bgFilenameExt = bgFile.originalname.split(".").pop() || "png";
+      const tempBgFilename = `bg_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${bgFilenameExt}`;
+      bgPath = path.join("public", "uploads", tempBgFilename);
+      fs.writeFileSync(bgPath, bgFile.buffer);
+      tempFilesToCleanup.push(bgPath);
+    }
+
     if (avatarType === "upload") {
-      if (!req.file) {
+      if (!avatarFile) {
         return res.status(400).json({
           success: false,
           error: "Avatar video file upload is selected, but no file was uploaded.",
@@ -703,7 +797,7 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
       }
       const uploadFilename = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`;
       const tempUploadPath = path.join("public", "uploads", uploadFilename);
-      fs.writeFileSync(tempUploadPath, req.file.buffer);
+      fs.writeFileSync(tempUploadPath, avatarFile.buffer);
       rawVideoPath = tempUploadPath;
       tempFilesToCleanup.push(tempUploadPath);
     } else if (avatarType === "url") {
@@ -995,6 +1089,42 @@ app.post("/api/generate-video", upload.single("avatarFile"), async (req, res) =>
             );
             videoUrl = gfpganOutput.toString();
             addJobLog(jobId, `GFPGAN Face restoration complete. Enhanced video URL: ${videoUrl}`);
+          }
+        }
+
+        // 5. Apply Video Branding & Background Layouts
+        if ((logoPath || bgPath) && videoUrl) {
+          addJobLog(jobId, "Applying Video Branding & Background Layouts...");
+          const brandedFilename = `branded_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`;
+          const brandedOutputPath = path.join("public", "uploads", brandedFilename);
+
+          let localProcessingVideoPath = videoUrl;
+          if (videoUrl.startsWith("http")) {
+            addJobLog(jobId, "Downloading video to local server for branding compositions...");
+            const tempDownloadName = `temp_dl_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`;
+            localProcessingVideoPath = path.join("public", "uploads", tempDownloadName);
+            const response = await fetch(videoUrl);
+            const buffer = await response.arrayBuffer();
+            fs.writeFileSync(localProcessingVideoPath, Buffer.from(buffer));
+            tempFilesToCleanup.push(localProcessingVideoPath);
+          } else if (videoUrl.startsWith("/uploads/")) {
+            localProcessingVideoPath = path.join("public", videoUrl);
+          }
+
+          try {
+            await applyBrandingAndWatermark(
+              localProcessingVideoPath,
+              bgPath,
+              bgPresenterAlign,
+              logoPath,
+              logoPosition,
+              brandedOutputPath
+            );
+            videoUrl = `/uploads/${brandedFilename}`;
+            addJobLog(jobId, `Branding and layout composition complete. Final video path: ${videoUrl}`);
+          } catch (brandingError) {
+            console.error("Branding failed:", brandingError);
+            addJobLog(jobId, `Warning: Branding failed: ${brandingError.message}. Using default output.`);
           }
         }
 
