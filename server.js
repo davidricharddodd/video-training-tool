@@ -986,9 +986,16 @@ app.post("/api/generate-video", upload.fields([
           } else {
             // Standard single-run prediction for shorter assets or alternative engines
              addJobLog(jobId, `Running single Fal.ai prediction using model ${endpointId}...`);
+             const falInput = { audio_url: publicAudioUrl };
+             if (endpointId.includes("wav2lip")) {
+               falInput.face_url = publicVideoUrl;
+             } else {
+               falInput.video_url = publicVideoUrl;
+               falInput.sync_mode = "loop";
+             }
              const queueInfo = await startFalPrediction(
                endpointId,
-               { video_url: publicVideoUrl, audio_url: publicAudioUrl, sync_mode: "loop" },
+               falInput,
                falApiKey
              );
              const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
