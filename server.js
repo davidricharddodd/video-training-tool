@@ -499,11 +499,12 @@ async function runFalTTS(text, voice, apiKey, jobId = null) {
 
 // Route 1: Generate Audio Preview (supporting custom [pause X.X] markers and long-form scripts)
 app.post("/api/generate-audio", async (req, res) => {
+  let activeProvider = "replicate";
   try {
     console.log(`[Audio Generation Request] Received body:`, req.body);
     const { text, voice, customToken, customFalToken, lipsyncProvider } = req.body;
 
-    const activeProvider = lipsyncProvider || "replicate";
+    activeProvider = lipsyncProvider || "replicate";
     let apiToken = "";
     if (activeProvider === "fal") {
       apiToken = customFalToken || process.env.FAL_KEY;
@@ -660,7 +661,9 @@ app.post("/api/generate-audio", async (req, res) => {
   } catch (error) {
     console.error("Audio generation failed:", error);
     let errorMsg = error.message || "An unexpected error occurred during audio generation.";
-    if (activeProvider === "fal" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated") || errorMsg.includes("Key"))) {
+    if (errorMsg.includes("TOP_UP") || errorMsg.includes("locked") || errorMsg.includes("403")) {
+      errorMsg = "Your Fal.ai account is locked due to insufficient funds (TOP_UP required). Please log in to your Fal.ai dashboard to top up your balance.";
+    } else if (activeProvider === "fal" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated") || errorMsg.includes("Key"))) {
       errorMsg = "Your Fal.ai API Key is invalid or expired. Please check your token in Developer Settings or set FAL_KEY in Railway.";
     } else if (activeProvider === "replicate" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated"))) {
       errorMsg = "Your Replicate API Token is invalid or expired. Please check your token in Developer Settings or configure REPLICATE_API_TOKEN in Railway.";
