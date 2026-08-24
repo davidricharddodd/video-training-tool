@@ -618,9 +618,13 @@ app.post("/api/generate-audio", async (req, res) => {
 
   } catch (error) {
     console.error("Audio generation failed:", error);
+    let errorMsg = error.message || "An unexpected error occurred during audio generation.";
+    if (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated")) {
+      errorMsg = "Your Replicate API Token is invalid or expired. Please check your token in Developer Settings or configure REPLICATE_API_TOKEN in Railway.";
+    }
     return res.status(500).json({
       success: false,
-      error: error.message || "An unexpected error occurred during audio generation.",
+      error: errorMsg,
     });
   }
 });
