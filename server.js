@@ -478,10 +478,22 @@ async function runWithRetry(replicate, model, options, retries = 6, delay = 1000
   }
 }
 
+// Resolve the correct language-specific Fal.ai Kokoro endpoint
+function getFalTtsEndpoint(voice) {
+  if (!voice) return "fal-ai/kokoro";
+  if (voice.startsWith("bf_") || voice.startsWith("bm_")) return "fal-ai/kokoro/british-english";
+  if (voice.startsWith("es_")) return "fal-ai/kokoro/spanish";
+  if (voice.startsWith("fr_")) return "fal-ai/kokoro/french";
+  if (voice.startsWith("jf_")) return "fal-ai/kokoro/japanese";
+  if (voice.startsWith("zf_")) return "fal-ai/kokoro/mandarin-chinese";
+  return "fal-ai/kokoro";
+}
+
 // Helper to run Fal.ai TTS prediction using fal-ai/kokoro
 async function runFalTTS(text, voice, apiKey, jobId = null) {
+  const endpoint = getFalTtsEndpoint(voice);
   const queueInfo = await startFalPrediction(
-    "fal-ai/kokoro",
+    endpoint,
     {
       text: text,
       voice: voice || "af_bella",
@@ -492,7 +504,7 @@ async function runFalTTS(text, voice, apiKey, jobId = null) {
   const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, apiKey, jobId);
   const audioUrl = result.audio ? result.audio.url : result.output;
   if (!audioUrl) {
-    throw new Error("Fal.ai TTS prediction did not return a valid audio URL.");
+    throw new Error(`Fal.ai TTS prediction (${endpoint}) did not return a valid audio URL.`);
   }
   return audioUrl;
 }
