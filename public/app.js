@@ -250,7 +250,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch("/api/generate-audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, customToken })
+        body: JSON.stringify({ 
+          text, 
+          voice, 
+          customToken, 
+          customFalToken: falToken, 
+          lipsyncProvider: lipsyncProvider.value 
+        })
       });
 
       const data = await response.json();

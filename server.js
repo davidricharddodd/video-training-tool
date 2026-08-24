@@ -478,18 +478,49 @@ async function runWithRetry(replicate, model, options, retries = 6, delay = 1000
   }
 }
 
+// Helper to run Fal.ai TTS prediction using fal-ai/kokoro
+async function runFalTTS(text, voice, apiKey, jobId = null) {
+  const queueInfo = await startFalPrediction(
+    "fal-ai/kokoro",
+    {
+      text: text,
+      voice: voice || "af_bella",
+      speed: 1.0
+    },
+    apiKey
+  );
+  const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, apiKey, jobId);
+  const audioUrl = result.audio ? result.audio.url : result.output;
+  if (!audioUrl) {
+    throw new Error("Fal.ai TTS prediction did not return a valid audio URL.");
+  }
+  return audioUrl;
+}
+
 // Route 1: Generate Audio Preview (supporting custom [pause X.X] markers and long-form scripts)
 app.post("/api/generate-audio", async (req, res) => {
   try {
     console.log(`[Audio Generation Request] Received body:`, req.body);
-    const { text, voice, customToken } = req.body;
+    const { text, voice, customToken, customFalToken, lipsyncProvider } = req.body;
 
-    const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
-    if (!apiToken) {
-      return res.status(400).json({
-        success: false,
-        error: "Replicate API Token is missing.",
-      });
+    const activeProvider = lipsyncProvider || "replicate";
+    let apiToken = "";
+    if (activeProvider === "fal") {
+      apiToken = customFalToken || process.env.FAL_KEY;
+      if (!apiToken) {
+        return res.status(400).json({
+          success: false,
+          error: "Fal.ai API Key is missing. Please enter it in Developer Settings or set FAL_KEY in Railway.",
+        });
+      }
+    } else {
+      apiToken = customToken || process.env.REPLICATE_API_TOKEN;
+      if (!apiToken) {
+        return res.status(400).json({
+          success: false,
+          error: "Replicate API Token is missing. Please enter it in Developer Settings or configure REPLICATE_API_TOKEN in Railway.",
+        });
+      }
     }
 
     if (!text || text.trim() === "") {
@@ -499,9 +530,9 @@ app.post("/api/generate-audio", async (req, res) => {
       });
     }
 
-    const replicate = new Replicate({ auth: apiToken });
+    const replicate = activeProvider === "replicate" ? new Replicate({ auth: apiToken }) : null;
     const resolvedLang = getLanguageCode(voice);
-    console.log(`[Audio Generation] Resolved language code: "${resolvedLang}" for voice: "${voice}"`);
+    console.log(`[Audio Generation] Resolved language code: "${resolvedLang}" for voice: "${voice}" (Provider: ${activeProvider})`);
 
     // Parse and split text into sentence-sized segments and pauses (using larger 1000-char limits to prevent rate limits)
     const parts = splitTextIntoChunks(text, 1000);
@@ -515,18 +546,23 @@ app.post("/api/generate-audio", async (req, res) => {
     // If there is only one short text chunk, execute a single quick TTS call
     if (parts.length === 1 && parts[0].type === "text") {
       console.log(`[Audio Generation] Short text detected. Running single TTS generation...`);
-      const audioOutput = await runWithRetry(
-        replicate,
-        "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
-        {
-          input: {
-            text: text,
-            voice: voice || "af_bella",
-            speed: 1.0
-          },
-        }
-      );
-      const audioUrl = audioOutput.toString();
+      let audioUrl = "";
+      if (activeProvider === "fal") {
+        audioUrl = await runFalTTS(text, voice, apiToken, audioJobId);
+      } else {
+        const audioOutput = await runWithRetry(
+          replicate,
+          "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
+          {
+            input: {
+              text: text,
+              voice: voice || "af_bella",
+              speed: 1.0
+            },
+          }
+        );
+        audioUrl = audioOutput.toString();
+      }
       await downloadFile(audioUrl, finalOutputPath);
 
       // Save to database history
@@ -558,18 +594,23 @@ app.post("/api/generate-audio", async (req, res) => {
       
       if (part.type === "text") {
         console.log(`[Audio Generation] Generating TTS chunk ${i + 1}/${parts.length}: "${part.content.substring(0, 40)}..."`);
-        const audioOutput = await runWithRetry(
-          replicate,
-          "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
-          {
-            input: {
-              text: part.content,
-              voice: voice || "af_bella",
-              speed: 1.0
-            },
-          }
-        );
-        const audioUrl = audioOutput.toString();
+        let audioUrl = "";
+        if (activeProvider === "fal") {
+          audioUrl = await runFalTTS(part.content, voice, apiToken, audioJobId);
+        } else {
+          const audioOutput = await runWithRetry(
+            replicate,
+            "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
+            {
+              input: {
+                text: part.content,
+                voice: voice || "af_bella",
+                speed: 1.0
+              },
+            }
+          );
+          audioUrl = audioOutput.toString();
+        }
         await downloadFile(audioUrl, segmentFile);
         segmentFiles.push(segmentFile);
       } else if (part.type === "pause") {
@@ -619,7 +660,9 @@ app.post("/api/generate-audio", async (req, res) => {
   } catch (error) {
     console.error("Audio generation failed:", error);
     let errorMsg = error.message || "An unexpected error occurred during audio generation.";
-    if (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated")) {
+    if (activeProvider === "fal" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated") || errorMsg.includes("Key"))) {
+      errorMsg = "Your Fal.ai API Key is invalid or expired. Please check your token in Developer Settings or set FAL_KEY in Railway.";
+    } else if (activeProvider === "replicate" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated"))) {
       errorMsg = "Your Replicate API Token is invalid or expired. Please check your token in Developer Settings or configure REPLICATE_API_TOKEN in Railway.";
     }
     return res.status(500).json({
