@@ -492,13 +492,21 @@ function getFalTtsEndpoint(voice) {
 // Helper to run Fal.ai TTS prediction using fal-ai/kokoro
 async function runFalTTS(text, voice, apiKey, jobId = null) {
   const endpoint = getFalTtsEndpoint(voice);
+  
+  const payload = {
+    voice: voice || "af_bella",
+    speed: 1.0
+  };
+
+  if (endpoint === "fal-ai/kokoro") {
+    payload.text = text;
+  } else {
+    payload.prompt = text; // Variant endpoints expect "prompt" instead of "text"
+  }
+
   const queueInfo = await startFalPrediction(
     endpoint,
-    {
-      text: text,
-      voice: voice || "af_bella",
-      speed: 1.0
-    },
+    payload,
     apiKey
   );
   const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, apiKey, jobId);
