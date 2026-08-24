@@ -1073,7 +1073,7 @@ app.post("/api/generate-video", upload.fields([
              addJobLog(jobId, `Fal.ai run complete. Video URL: ${videoUrl}`);
           }
 
-          cleanUpTempFiles(tempFilesToCleanup);
+
 
         } else {
           // Replicate Provider Branch
@@ -1100,7 +1100,7 @@ app.post("/api/generate-video", upload.fields([
             videoUrl = videoOutput.toString();
             addJobLog(jobId, `Step 2/2 complete. Video URL: ${videoUrl}`);
 
-            cleanUpTempFiles(tempFilesToCleanup);
+
 
           } else {
             // Default: LatentSync
@@ -1128,7 +1128,6 @@ app.post("/api/generate-video", upload.fields([
             videoUrl = videoOutput.toString();
             addJobLog(jobId, `Step 2/2 complete. Video URL: ${videoUrl}`);
 
-            cleanUpTempFiles(tempFilesToCleanup);
           }
         }
 
@@ -1215,6 +1214,8 @@ app.post("/api/generate-video", upload.fields([
           status: "completed"
         });
 
+        // Cleanup temporary files once all steps (including branding) are done
+        cleanUpTempFiles(tempFilesToCleanup);
       } catch (error) {
         console.error(`[Job ${jobId}] Video generation failed:`, error);
         cleanUpTempFiles(tempFilesToCleanup);

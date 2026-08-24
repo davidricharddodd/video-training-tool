@@ -15,6 +15,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const lipsyncProvider = document.getElementById("lipsyncProvider");
   const lipsyncEngine = document.getElementById("lipsyncEngine");
   const presetPreviewVideo = document.getElementById("presetPreviewVideo");
+  const presetPreviewContainer = document.getElementById("presetPreviewContainer");
+  const previewLogoOverlay = document.getElementById("previewLogoOverlay");
   const avatarUrlContainer = document.getElementById("avatarUrlContainer");
   const avatarUploadContainer = document.getElementById("avatarUploadContainer");
   const avatarFile = document.getElementById("avatarFile");
@@ -68,6 +70,80 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Live Preview compositor for Watermark Logo and Background
+  function updateBrandingPreview() {
+    // 1. Process Background Image preview
+    if (bgFile.files && bgFile.files.length > 0) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        presetPreviewContainer.style.backgroundImage = `url('${e.target.result}')`;
+      };
+      reader.readAsDataURL(bgFile.files[0]);
+
+      // Align presenter video based on selection
+      presetPreviewVideo.style.height = "100%";
+      presetPreviewVideo.style.width = "auto";
+      presetPreviewVideo.style.position = "absolute";
+      presetPreviewVideo.style.top = "0";
+      
+      const align = bgPresenterAlign.value;
+      if (align === "left") {
+        presetPreviewVideo.style.left = "8%";
+        presetPreviewVideo.style.right = "auto";
+        presetPreviewVideo.style.transform = "none";
+      } else if (align === "right") {
+        presetPreviewVideo.style.left = "auto";
+        presetPreviewVideo.style.right = "8%";
+        presetPreviewVideo.style.transform = "none";
+      } else { // Center
+        presetPreviewVideo.style.left = "50%";
+        presetPreviewVideo.style.right = "auto";
+        presetPreviewVideo.style.transform = "translateX(-50%)";
+      }
+    } else {
+      presetPreviewContainer.style.backgroundImage = "none";
+      presetPreviewVideo.style.position = "static";
+      presetPreviewVideo.style.width = "100%";
+      presetPreviewVideo.style.height = "100%";
+      presetPreviewVideo.style.transform = "none";
+    }
+
+    // 2. Process Logo Watermark preview
+    if (logoFile.files && logoFile.files.length > 0) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        previewLogoOverlay.src = e.target.result;
+        previewLogoOverlay.classList.remove("hidden");
+      };
+      reader.readAsDataURL(logoFile.files[0]);
+
+      // Position watermark logo preview
+      const pos = logoPosition.value;
+      // Reset positions first
+      previewLogoOverlay.style.top = "auto";
+      previewLogoOverlay.style.bottom = "auto";
+      previewLogoOverlay.style.left = "auto";
+      previewLogoOverlay.style.right = "auto";
+
+      if (pos === "top_left") {
+        previewLogoOverlay.style.top = "8px";
+        previewLogoOverlay.style.left = "8px";
+      } else if (pos === "top_right") {
+        previewLogoOverlay.style.top = "8px";
+        previewLogoOverlay.style.right = "8px";
+      } else if (pos === "bottom_left") {
+        previewLogoOverlay.style.bottom = "8px";
+        previewLogoOverlay.style.left = "8px";
+      } else if (pos === "bottom_right") {
+        previewLogoOverlay.style.bottom = "8px";
+        previewLogoOverlay.style.right = "8px";
+      }
+    } else {
+      previewLogoOverlay.classList.add("hidden");
+      previewLogoOverlay.src = "";
+    }
+  }
+
   logoFile.addEventListener("change", (e) => {
     if (e.target.files.length > 0) {
       logoFilename.textContent = `Selected: ${e.target.files[0].name}`;
@@ -78,7 +154,10 @@ document.addEventListener("DOMContentLoaded", () => {
       logoFilename.classList.remove("text-violet-400", "font-semibold");
       logoFilename.classList.add("text-slate-400");
     }
+    updateBrandingPreview();
   });
+
+  logoPosition.addEventListener("change", updateBrandingPreview);
 
   bgFile.addEventListener("change", (e) => {
     if (e.target.files.length > 0) {
@@ -90,7 +169,10 @@ document.addEventListener("DOMContentLoaded", () => {
       bgFilename.classList.remove("text-violet-400", "font-semibold");
       bgFilename.classList.add("text-slate-400");
     }
+    updateBrandingPreview();
   });
+
+  bgPresenterAlign.addEventListener("change", updateBrandingPreview);
 
   // Toggle visible inputs based on Avatar Type radio select
   avatarTypeRadios.forEach(radio => {

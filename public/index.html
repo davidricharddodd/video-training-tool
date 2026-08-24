@@ -209,11 +209,13 @@
                   </optgroup>
                 </select>
                 <!-- Preset Avatar Preview Player -->
-                <div id="presetPreviewContainer" class="mt-2.5 border border-slate-850 rounded-lg overflow-hidden aspect-video bg-slate-950 flex items-center justify-center relative">
-                  <video id="presetPreviewVideo" autoplay muted loop playsinline class="w-full h-full object-contain">
+                <div id="presetPreviewContainer" class="mt-2.5 border border-slate-850 rounded-lg overflow-hidden aspect-video bg-slate-950 flex items-center justify-center relative bg-cover bg-center transition-all duration-300">
+                  <video id="presetPreviewVideo" autoplay muted loop playsinline class="w-full h-full object-contain transition-all duration-300">
                     <source id="presetPreviewSource" src="/presets/female_1.mp4" type="video/mp4">
                     Your browser does not support the video tag.
                   </video>
+                  <!-- Preview Logo Overlay -->
+                  <img id="previewLogoOverlay" class="absolute hidden select-none pointer-events-none max-h-[15%] max-w-[20%] object-contain" alt="Watermark logo preview">
                   <span class="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-slate-900/80 border border-slate-800 rounded text-[8px] font-bold uppercase tracking-wider text-slate-400">
                     Avatar Preview
                   </span>
