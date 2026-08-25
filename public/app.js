@@ -22,6 +22,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const avatarFile = document.getElementById("avatarFile");
   const uploadFilename = document.getElementById("uploadFilename");
 
+  // Avatar Generation Elements
+  const avatarGenerateContainer = document.getElementById("avatarGenerateContainer");
+  const genAvatarGender = document.getElementById("genAvatarGender");
+  const genAvatarFraming = document.getElementById("genAvatarFraming");
+  const genAvatarBackground = document.getElementById("genAvatarBackground");
+  const generateAvatarBtn = document.getElementById("generateAvatarBtn");
+  const generateAvatarBtnLabel = document.getElementById("generateAvatarBtnLabel");
+  const generateAvatarSpinner = document.getElementById("generateAvatarSpinner");
+  const generatedAvatarPreviewContainer = document.getElementById("generatedAvatarPreviewContainer");
+  const generatedAvatarPreviewVideo = document.getElementById("generatedAvatarPreviewVideo");
+  let generatedAvatarUrl = null;
+
   // Branding Elements
   const logoFile = document.getElementById("logoFile");
   const logoFilename = document.getElementById("logoFilename");
@@ -178,20 +190,87 @@ document.addEventListener("DOMContentLoaded", () => {
   avatarTypeRadios.forEach(radio => {
     radio.addEventListener("change", (e) => {
       const val = e.target.value;
-      if (val === "url") {
-        avatarPresetContainer.classList.add("hidden");
-        avatarUrlContainer.classList.remove("hidden");
-        avatarUploadContainer.classList.add("hidden");
-      } else if (val === "upload") {
-        avatarPresetContainer.classList.add("hidden");
-        avatarUrlContainer.classList.add("hidden");
-        avatarUploadContainer.classList.remove("hidden");
-      } else {
-        avatarPresetContainer.classList.remove("hidden");
-        avatarUrlContainer.classList.add("hidden");
-        avatarUploadContainer.classList.add("hidden");
-      }
+      avatarPresetContainer.classList.toggle("hidden", val !== "preset");
+      avatarUrlContainer.classList.toggle("hidden", val !== "url");
+      avatarUploadContainer.classList.toggle("hidden", val !== "upload");
+      avatarGenerateContainer.classList.toggle("hidden", val !== "generate");
     });
+  });
+
+  // Generate a base avatar loop video via Fal.ai text-to-video
+  generateAvatarBtn.addEventListener("click", async () => {
+    const falToken = document.getElementById("falToken").value;
+    generateAvatarBtn.disabled = true;
+    generateAvatarBtnLabel.textContent = "Generating... (1-3 min)";
+    generateAvatarSpinner.classList.remove("hidden");
+    generatedAvatarUrl = null;
+    generatedAvatarPreviewContainer.classList.add("hidden");
+
+    try {
+      logMessage(`Requesting avatar generation (${genAvatarGender.value}, ${genAvatarFraming.value}, ${genAvatarBackground.value})...`);
+      const startResponse = await fetch("/api/generate-avatar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gender: genAvatarGender.value,
+          framing: genAvatarFraming.value,
+          background: genAvatarBackground.value,
+          falToken: falToken
+        })
+      });
+      const startData = await startResponse.json();
+      if (!startResponse.ok || !startData.success) {
+        throw new Error(startData.error || "Failed to start avatar generation.");
+      }
+
+      const jobId = startData.jobId;
+      let lastLogIndex = 0;
+
+      await new Promise((resolve, reject) => {
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResponse = await fetch(`/api/jobs/${jobId}`);
+            const statusData = await statusResponse.json();
+            if (!statusResponse.ok || !statusData.success) {
+              throw new Error(statusData.error || "Lost track of avatar generation job.");
+            }
+            const job = statusData.job;
+
+            if (job.logs && job.logs.length > lastLogIndex) {
+              for (let i = lastLogIndex; i < job.logs.length; i++) {
+                const cleanMsg = job.logs[i].replace(/^\[\d{1,2}:\d{2}:\d{2}\]\s*/, "");
+                logMessage(cleanMsg);
+              }
+              lastLogIndex = job.logs.length;
+            }
+
+            if (job.status === "completed") {
+              clearInterval(pollInterval);
+              resolve(job.videoUrl);
+            } else if (job.status === "failed") {
+              clearInterval(pollInterval);
+              reject(new Error(job.error || "Avatar generation failed on server."));
+            }
+          } catch (pollErr) {
+            clearInterval(pollInterval);
+            reject(pollErr);
+          }
+        }, 3000);
+      }).then((videoUrl) => {
+        generatedAvatarUrl = videoUrl;
+        generatedAvatarPreviewVideo.src = videoUrl;
+        generatedAvatarPreviewContainer.classList.remove("hidden");
+        logMessage(`Avatar loop generated successfully!`, "success");
+      });
+    } catch (err) {
+      console.error(err);
+      logMessage(`Avatar generation error: ${err.message}`, "error");
+      alert(`Avatar Generation Failed: ${err.message}`);
+    } finally {
+      generateAvatarBtn.disabled = false;
+      generateAvatarBtnLabel.textContent = "Generate Avatar Loop";
+      generateAvatarSpinner.classList.add("hidden");
+    }
   });
 
   // Dynamic model options selection based on provider
@@ -405,10 +484,13 @@ document.addEventListener("DOMContentLoaded", () => {
       localStorage.removeItem("fal_token");
     }
 
+    // The backend only knows preset/url/upload - a generated avatar is submitted as a URL
+    const submittedAvatarType = avatarType === "generate" ? "url" : avatarType;
+
     // Build Form Data to handle potential file uploads
     const formData = new FormData();
     formData.append("audioFilename", generatedAudioFilename);
-    formData.append("avatarType", avatarType);
+    formData.append("avatarType", submittedAvatarType);
     formData.append("lipsyncProvider", provider);
     formData.append("lipsyncEngine", engine);
     formData.append("customToken", customToken);
@@ -439,6 +521,15 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       formData.append("avatarFile", file);
       logMessage(`Uploading custom avatar video: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)...`);
+    } else if (avatarType === "generate") {
+      if (!generatedAvatarUrl) {
+        logMessage("Validation error: No avatar has been generated yet.", "error");
+        alert("Please click \"Generate Avatar Loop\" first, or switch to a different Avatar Video Source.");
+        return;
+      }
+      const absoluteAvatarUrl = window.location.origin + generatedAvatarUrl;
+      formData.append("avatarUrl", absoluteAvatarUrl);
+      logMessage(`Using generated avatar video: ${absoluteAvatarUrl}`);
     }
 
     // Set UI to loading state

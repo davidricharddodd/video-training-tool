@@ -163,7 +163,7 @@
                 <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
                   Avatar Video Source
                 </label>
-                <div class="grid grid-cols-3 gap-2 p-0.5 bg-slate-950 border border-slate-850 rounded-lg">
+                <div class="grid grid-cols-4 gap-2 p-0.5 bg-slate-950 border border-slate-850 rounded-lg">
                   <label class="cursor-pointer">
                     <input type="radio" name="avatarType" value="preset" checked class="sr-only peer" />
                     <div class="py-1.5 text-center text-[10px] font-medium text-slate-500 rounded-md hover:text-slate-300 peer-checked:bg-slate-900 peer-checked:text-violet-400 transition-all duration-150">
@@ -180,6 +180,12 @@
                     <input type="radio" name="avatarType" value="upload" class="sr-only peer" />
                     <div class="py-1.5 text-center text-[10px] font-medium text-slate-500 rounded-md hover:text-slate-300 peer-checked:bg-slate-900 peer-checked:text-violet-400 transition-all duration-150">
                       Upload File
+                    </div>
+                  </label>
+                  <label class="cursor-pointer">
+                    <input type="radio" name="avatarType" value="generate" class="sr-only peer" />
+                    <div class="py-1.5 text-center text-[10px] font-medium text-slate-500 rounded-md hover:text-slate-300 peer-checked:bg-slate-900 peer-checked:text-violet-400 transition-all duration-150">
+                      Generate
                     </div>
                   </label>
                 </div>
@@ -244,6 +250,63 @@
                   <span class="text-[10px] text-slate-400 font-medium group-hover:text-slate-300 text-center" id="uploadFilename">Click to select MP4 video</span>
                   <span class="text-[8px] text-slate-600 mt-0.5">Maximum size: 100MB</span>
                   <input type="file" id="avatarFile" name="avatarFile" accept="video/mp4" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                </div>
+              </div>
+
+              <!-- Conditional Input: Generate Avatar via AI -->
+              <div id="avatarGenerateContainer" class="hidden space-y-3">
+                <p class="text-[10px] text-slate-500 leading-relaxed">
+                  Generates a short, natural idle loop (mouth closed, subtle blinking/breathing) using Kling 2.5 Turbo Pro. Lip-sync is applied to it in Step 2.
+                </p>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label for="genAvatarGender" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                      Gender
+                    </label>
+                    <select id="genAvatarGender"
+                      class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-violet-500 transition-all duration-200">
+                      <option value="female" selected>Female</option>
+                      <option value="male">Male</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="genAvatarFraming" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                      Framing
+                    </label>
+                    <select id="genAvatarFraming"
+                      class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-violet-500 transition-all duration-200">
+                      <option value="head_shoulders" selected>Head &amp; Shoulders</option>
+                      <option value="standing">Standing</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label for="genAvatarBackground" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    Office Background
+                  </label>
+                  <select id="genAvatarBackground"
+                    class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-violet-500 transition-all duration-200">
+                    <option value="office_modern" selected>Modern Open-Plan Office</option>
+                    <option value="office_executive">Executive Office (Skyline View)</option>
+                    <option value="office_studio">Neutral Corporate Studio</option>
+                  </select>
+                </div>
+
+                <button type="button" id="generateAvatarBtn"
+                  class="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 font-semibold rounded-lg text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2">
+                  <span id="generateAvatarBtnLabel">Generate Avatar Loop</span>
+                  <svg class="h-4 w-4 animate-spin hidden" id="generateAvatarSpinner" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1021 12h-1.5" />
+                  </svg>
+                </button>
+
+                <div id="generatedAvatarPreviewContainer" class="hidden border border-slate-850 rounded-lg overflow-hidden aspect-video bg-slate-950 flex items-center justify-center relative">
+                  <video id="generatedAvatarPreviewVideo" autoplay muted loop playsinline class="w-full h-full object-contain">
+                    Your browser does not support the video tag.
+                  </video>
+                  <span class="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-emerald-950/80 border border-emerald-800/60 rounded text-[8px] font-bold uppercase tracking-wider text-emerald-400">
+                    Generated Avatar
+                  </span>
                 </div>
               </div>
             </div>

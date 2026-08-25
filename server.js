@@ -792,6 +792,118 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
   }
 }
 
+// Builds a prompt for generating a base avatar loop clip via text-to-video.
+// The clip is a silent idle shot (mouth closed) since lip-sync is applied to it afterward,
+// and the camera is explicitly locked off since the pipeline loops this clip via ffmpeg
+// to match the audio duration - any camera drift or motion would make the loop jarring.
+function buildAvatarGenerationPrompt(gender, framing, background) {
+  const genderDesc = gender === "male"
+    ? "a professional man in his 30s"
+    : "a professional woman in her 30s";
+
+  const framingDesc = framing === "standing"
+    ? "Medium-wide shot, standing upright and facing the camera, visible from roughly the waist up, relaxed professional posture"
+    : "Medium close-up shot, framed from the chest and shoulders up";
+
+  const backgrounds = {
+    office_modern: "a bright modern open-plan office with soft natural light and softly blurred desks in the background",
+    office_executive: "an upscale executive office with a wooden desk, bookshelf, and a city skyline visible through a window, softly blurred",
+    office_studio: "a clean neutral corporate studio backdrop with soft gradient lighting, subtly evoking a modern office setting"
+  };
+  const backgroundDesc = backgrounds[background] || backgrounds.office_modern;
+
+  const prompt = `Photorealistic corporate video presenter, ${genderDesc}, facing directly into a static locked-off camera and making direct eye contact with the lens. ${framingDesc}. Positioned in ${backgroundDesc}. Mouth gently closed in a calm, neutral, professional resting expression - not speaking. Only subtle, natural idle movement: soft blinking, gentle breathing, a very slight relaxed head tilt or shift of weight, minimal natural hand movement if visible. Even, flattering studio-quality lighting with sharp focus on the face. The camera never pans, zooms, or moves. This is a stable base shot intended to loop seamlessly and have lip-sync animation added afterward, so the mouth must stay closed and relaxed throughout.`;
+
+  const negative_prompt = "talking, open mouth, mouth moving, speaking, shouting, extreme facial expression, camera movement, panning, zooming, shaking, handheld camera, jump cuts, text, watermark, subtitles, blurry, distorted, deformed face, multiple people, cropped head, low quality";
+
+  return { prompt, negative_prompt };
+}
+
+// Route: Generate a base avatar loop video (silent idle shot) via Fal.ai Kling text-to-video
+app.post("/api/generate-avatar", async (req, res) => {
+  try {
+    const { gender, framing, background, falToken } = req.body;
+
+    const falApiKey = falToken || process.env.FAL_KEY;
+    if (!falApiKey) {
+      return res.status(400).json({
+        success: false,
+        error: "Fal.ai API key is missing. Please provide it in Developer Settings or configure FAL_KEY in Railway.",
+      });
+    }
+    if (!gender || !framing) {
+      return res.status(400).json({
+        success: false,
+        error: "Gender and framing are required.",
+      });
+    }
+
+    const jobId = "avt" + Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+    jobs.set(jobId, {
+      status: "processing",
+      step: "avatar_generation",
+      progress: 10,
+      videoUrl: null,
+      error: null,
+      logs: []
+    });
+    setTimeout(() => {
+      jobs.delete(jobId);
+    }, 60 * 60 * 1000);
+
+    res.status(200).json({
+      success: true,
+      jobId: jobId
+    });
+
+    (async () => {
+      try {
+        const { prompt, negative_prompt } = buildAvatarGenerationPrompt(gender, framing, background);
+        addJobLog(jobId, `Generating base avatar loop via Kling 2.5 Turbo Pro (Text-to-Video)...`);
+
+        const queueInfo = await startFalPrediction(
+          "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+          { prompt, negative_prompt, duration: "5", aspect_ratio: "16:9" },
+          falApiKey
+        );
+
+        const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+        const resultVideoUrl = result.video ? result.video.url : result.output;
+        if (!resultVideoUrl) {
+          throw new Error("Avatar generation did not return a valid video URL.");
+        }
+
+        addJobLog(jobId, `Downloading generated avatar clip...`);
+        const outFilename = `avatar_${jobId}.mp4`;
+        const outPath = path.join("public", "uploads", outFilename);
+        await downloadFile(resultVideoUrl, outPath);
+
+        const job = jobs.get(jobId);
+        if (job) {
+          job.status = "completed";
+          job.progress = 100;
+          job.videoUrl = `/uploads/${outFilename}`;
+        }
+        addJobLog(jobId, `Avatar generation complete: /uploads/${outFilename}`);
+      } catch (err) {
+        console.error("Avatar generation error:", err);
+        const job = jobs.get(jobId);
+        if (job) {
+          job.status = "failed";
+          job.error = err.message || "Avatar generation failed.";
+        }
+        addJobLog(jobId, `Avatar generation failed: ${err.message}`);
+      }
+    })();
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message || "An unexpected error occurred during avatar generation.",
+    });
+  }
+});
+
 // Route 2: Generate Lip-Synced Video using Approved Audio
 app.post("/api/generate-video", upload.fields([
   { name: "avatarFile", maxCount: 1 },
