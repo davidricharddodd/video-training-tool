@@ -749,19 +749,41 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
     }
 
     if (status === "COMPLETED") {
-      const resultResponse = await fetch(responseUrl, {
-        method: "GET",
-        headers: {
-          "Authorization": `Key ${apiKey}`
+      // The job already finished rendering on Fal's side at this point, so a transient
+      // 5xx here (e.g. 504 downstream_service_unavailable) shouldn't sink an already-paid-for
+      // result. Retry a few times with backoff before giving up.
+      const maxAttempts = 5;
+      let lastError;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const resultResponse = await fetch(responseUrl, {
+          method: "GET",
+          headers: {
+            "Authorization": `Key ${apiKey}`
+          }
+        });
+
+        if (resultResponse.ok) {
+          return await resultResponse.json();
         }
-      });
 
-      if (!resultResponse.ok) {
         const errorText = await resultResponse.text();
-        throw new Error(`Fal.ai result fetch error (${resultResponse.status}): ${errorText}`);
-      }
+        lastError = new Error(`Fal.ai result fetch error (${resultResponse.status}): ${errorText}`);
 
-      return await resultResponse.json();
+        // Only retry on server-side/transient errors; fail fast on 4xx (auth, bad request, etc.)
+        if (resultResponse.status < 500 || attempt === maxAttempts) {
+          throw lastError;
+        }
+
+        const backoffMs = 3000 * attempt;
+        const msg = `Fal.ai result fetch failed (${resultResponse.status}), retrying in ${backoffMs / 1000}s... (attempt ${attempt}/${maxAttempts})`;
+        if (jobId) {
+          addJobLog(jobId, msg);
+        } else {
+          console.log(`[Fal.ai Queue] ${msg}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+      throw lastError;
     } else if (status === "FAILED") {
       throw new Error(statusData.error || "Fal.ai prediction failed.");
     }
