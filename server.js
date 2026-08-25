@@ -968,7 +968,8 @@ app.post("/api/generate-video", upload.fields([
           const falEndpoints = {
             fal_kling: "fal-ai/kling-video/lipsync/audio-to-video",
             fal_sync_lipsync_3: "fal-ai/sync-lipsync/v3",
-            fal_wav2lip: "fal-ai/wav2lip"
+            fal_wav2lip: "fal-ai/wav2lip",
+            fal_latentsync: "fal-ai/latentsync"
           };
           const endpointId = falEndpoints[lipsyncEngine] || falEndpoints.fal_kling;
 
@@ -1081,6 +1082,9 @@ app.post("/api/generate-video", upload.fields([
              const falInput = { audio_url: publicAudioUrl };
              if (endpointId.includes("wav2lip")) {
                falInput.face_url = publicVideoUrl;
+             } else if (endpointId.includes("latentsync")) {
+               falInput.video_url = publicVideoUrl;
+               falInput.loop_mode = "loop";
              } else {
                falInput.video_url = publicVideoUrl;
                falInput.sync_mode = "loop";

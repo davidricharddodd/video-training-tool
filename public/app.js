@@ -199,7 +199,8 @@ document.addEventListener("DOMContentLoaded", () => {
     fal: [
       { value: "fal_kling", text: "Kling LipSync (Cost: ~$0.17/min | Quality: Studio Grade)" },
       { value: "fal_sync_lipsync_3", text: "Sync Labs Lipsync v3 (Cost: ~$3.00/min | Quality: Cinema Grade)" },
-      { value: "fal_wav2lip", text: "Wav2Lip (Cost: ~$0.70/min | Quality: Standard)" }
+      { value: "fal_wav2lip", text: "Wav2Lip (Cost: ~$0.70/min | Quality: Standard)" },
+      { value: "fal_latentsync", text: "LatentSync (Cost: ~$0.20 for 40s, then $0.005/s | Quality: Good)" }
     ],
     replicate: [
       { value: "sync_lipsync_2", text: "Sync Labs Lipsync 2 (Cost: ~$3.00/min | Quality: Studio Grade)" },
