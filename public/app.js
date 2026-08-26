@@ -26,6 +26,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const avatarGenerateContainer = document.getElementById("avatarGenerateContainer");
   const genAvatarGender = document.getElementById("genAvatarGender");
   const genAvatarFraming = document.getElementById("genAvatarFraming");
+  const genAvatarEthnicity = document.getElementById("genAvatarEthnicity");
+  const genAvatarAge = document.getElementById("genAvatarAge");
   const genAvatarBackground = document.getElementById("genAvatarBackground");
   const generateAvatarBtn = document.getElementById("generateAvatarBtn");
   const generateAvatarBtnLabel = document.getElementById("generateAvatarBtnLabel");
@@ -212,13 +214,15 @@ document.addEventListener("DOMContentLoaded", () => {
     generatedAvatarPreviewContainer.classList.add("hidden");
 
     try {
-      logMessage(`Requesting avatar generation (${genAvatarGender.value}, ${genAvatarFraming.value}, ${genAvatarBackground.value})...`);
+      logMessage(`Requesting avatar generation (${genAvatarGender.value}, ${genAvatarEthnicity.value}, ${genAvatarAge.value}, ${genAvatarFraming.value}, ${genAvatarBackground.value})...`);
       const startResponse = await fetch("/api/generate-avatar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           gender: genAvatarGender.value,
           framing: genAvatarFraming.value,
+          ethnicity: genAvatarEthnicity.value,
+          age: genAvatarAge.value,
           background: genAvatarBackground.value,
           falToken: falToken
         })

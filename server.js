@@ -388,6 +388,14 @@ async function getDuration(mediaPath) {
   return parseFloat(stdout.trim());
 }
 
+// Helper to get total video frame count using ffprobe
+async function getFrameCount(mediaPath) {
+  const { stdout } = await execPromise(
+    `ffprobe -v error -select_streams v:0 -count_packets -show_entries stream=nb_read_packets -of default=noprint_wrappers=1:nokey=1 "${mediaPath}"`
+  );
+  return parseInt(stdout.trim(), 10);
+}
+
 // Helper to loop video if it is shorter than target audio
 async function loopVideoIfNeeded(videoSource, targetDuration) {
   const duration = await getDuration(videoSource);
@@ -398,13 +406,25 @@ async function loopVideoIfNeeded(videoSource, targetDuration) {
     return videoSource;
   }
 
-  // Create a ping-pong block (forward + reverse) to ensure seamless loops
+  // Determine frame count of source to avoid boundary frame duplication
+  let frameCount = 250; // fallback
+  try {
+    frameCount = await getFrameCount(videoSource);
+    console.log(`[Video Prep] Detected source frame count: ${frameCount}`);
+  } catch (err) {
+    console.error("[Video Prep] Failed to detect frame count, using 250 frames fallback:", err);
+  }
+
+  // Create a seamless ping-pong block (forward + reverse trim to prevent duplicate end/start frames)
   const tempOutputDir = os.tmpdir();
   const pingpongFile = path.join(tempOutputDir, `pingpong_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
   
-  console.log(`[Video Prep] Generating seamless ping-pong block...`);
+  console.log(`[Video Prep] Generating seamless frame-trimmed ping-pong block...`);
+  // Forward segment: frames 0 to N-1 (trim=end_frame=N)
+  // Reversed segment: drop first reversed frame (index 0, which is frame N-1) and drop last reversed frame (index N-1, which is frame 0)
+  // Therefore, reversed trim: start_frame=1:end_frame=N-1
   await execPromise(
-    `ffmpeg -y -i "${videoSource}" -filter_complex "[0:v]reverse[r];[0:v][r]concat=n=2:v=1:a=0[outv]" -map "[outv]" -c:v libx264 -pix_fmt yuv420p "${pingpongFile}"`
+    `ffmpeg -y -i "${videoSource}" -filter_complex "[0:v]trim=start_frame=0:end_frame=${frameCount},setpts=PTS-STARTPTS[f];[0:v]reverse,trim=start_frame=1:end_frame=${frameCount - 1},setpts=PTS-STARTPTS[r];[f][r]concat=n=2:v=1:a=0[outv]" -map "[outv]" -c:v libx264 -pix_fmt yuv420p "${pingpongFile}"`
   );
 
   const pingpongDuration = duration * 2;
@@ -882,10 +902,24 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
 // The clip is a silent idle shot (mouth closed) since lip-sync is applied to it afterward,
 // and the camera is explicitly locked off since the pipeline loops this clip via ffmpeg
 // to match the audio duration - any camera drift or motion would make the loop jarring.
-function buildAvatarGenerationPrompt(gender, framing, background) {
+function buildAvatarGenerationPrompt(gender, framing, background, ethnicity, age) {
+  // Translate ethnicity selection
+  let ethnicityDesc = "";
+  if (ethnicity === "black") ethnicityDesc = "Black ";
+  else if (ethnicity === "east_asian") ethnicityDesc = "East Asian ";
+  else if (ethnicity === "south_asian") ethnicityDesc = "South Asian ";
+  else if (ethnicity === "hispanic") ethnicityDesc = "Hispanic ";
+  else if (ethnicity === "white") ethnicityDesc = "White ";
+
+  // Translate age selection
+  let ageDesc = "in their 30s";
+  if (age === "young") ageDesc = "in their late 20s or early 30s";
+  else if (age === "middle") ageDesc = "in their late 40s or early 50s";
+  else if (age === "mature") ageDesc = "in their mid 60s";
+
   const genderDesc = gender === "male"
-    ? "a professional man in his 30s"
-    : "a professional woman in her 30s";
+    ? `a professional ${ethnicityDesc}man ${ageDesc}`
+    : `a professional ${ethnicityDesc}woman ${ageDesc}`;
 
   const framingDesc = framing === "standing"
     ? "Medium-wide shot, standing upright and facing the camera, visible from roughly the waist up, relaxed professional posture"
@@ -947,7 +981,7 @@ app.delete("/api/custom-avatars/:id", (req, res) => {
 // Route: Generate a base avatar loop video (silent idle shot) via Fal.ai Kling text-to-video
 app.post("/api/generate-avatar", async (req, res) => {
   try {
-    const { gender, framing, background, falToken } = req.body;
+    const { gender, framing, background, ethnicity, age, falToken } = req.body;
 
     const falApiKey = falToken || process.env.FAL_KEY;
     if (!falApiKey) {
@@ -983,7 +1017,7 @@ app.post("/api/generate-avatar", async (req, res) => {
 
     (async () => {
       try {
-        const { prompt, negative_prompt } = buildAvatarGenerationPrompt(gender, framing, background);
+        const { prompt, negative_prompt } = buildAvatarGenerationPrompt(gender, framing, background, ethnicity, age);
         addJobLog(jobId, `Generating base avatar loop via Kling 2.5 Turbo Pro (Text-to-Video)...`);
 
         const queueInfo = await startFalPrediction(
