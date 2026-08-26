@@ -398,17 +398,35 @@ async function loopVideoIfNeeded(videoSource, targetDuration) {
     return videoSource;
   }
 
-  const N = Math.ceil(targetDuration / duration) - 1;
-  console.log(`[Video Prep] Looping video ${N} times to match target duration...`);
-
+  // Create a ping-pong block (forward + reverse) to ensure seamless loops
   const tempOutputDir = os.tmpdir();
+  const pingpongFile = path.join(tempOutputDir, `pingpong_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
+  
+  console.log(`[Video Prep] Generating seamless ping-pong block...`);
+  await execPromise(
+    `ffmpeg -y -i "${videoSource}" -filter_complex "[0:v]reverse[r];[0:v][r]concat=n=2:v=1:a=0[outv]" -map "[outv]" -c:v libx264 -pix_fmt yuv420p "${pingpongFile}"`
+  );
+
+  const pingpongDuration = duration * 2;
+  const N = Math.ceil(targetDuration / pingpongDuration) - 1;
+  console.log(`[Video Prep] Looping ping-pong block ${N} times to match target duration...`);
+
   const tempOutputFile = path.join(tempOutputDir, `looped_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
   
   await execPromise(
-    `ffmpeg -y -stream_loop ${N} -i "${videoSource}" -c copy "${tempOutputFile}"`
+    `ffmpeg -y -stream_loop ${N} -i "${pingpongFile}" -c copy "${tempOutputFile}"`
   );
+
+  // Clean up the intermediate ping-pong file
+  try {
+    if (fs.existsSync(pingpongFile)) {
+      fs.unlinkSync(pingpongFile);
+    }
+  } catch (err) {
+    console.error("[Video Prep] Failed to delete intermediate pingpong file:", err);
+  }
   
-  console.log(`[Video Prep] Loop complete. Temporary file: ${tempOutputFile}`);
+  console.log(`[Video Prep] Seamless loop complete. Temporary file: ${tempOutputFile}`);
   return tempOutputFile;
 }
 
