@@ -233,8 +233,76 @@ class HistoryDB {
   }
 }
 
+// Persistent database for custom saved avatars
+class CustomAvatarsDB {
+  constructor(filePath) {
+    this.filePath = filePath;
+    this.avatars = [];
+    this.init();
+  }
+
+  init() {
+    try {
+      if (fs.existsSync(this.filePath)) {
+        const data = fs.readFileSync(this.filePath, "utf-8");
+        this.avatars = JSON.parse(data);
+      } else {
+        this.save();
+      }
+    } catch (err) {
+      console.error("[CustomAvatarsDB] Failed to initialize:", err);
+      this.avatars = [];
+    }
+  }
+
+  save() {
+    try {
+      fs.writeFileSync(this.filePath, JSON.stringify(this.avatars, null, 2), "utf-8");
+    } catch (err) {
+      console.error("[CustomAvatarsDB] Failed to save custom avatars:", err);
+    }
+  }
+
+  add(name, videoUrl) {
+    const id = "custom_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
+    const newAvatar = { id, name, videoUrl, createdAt: new Date().toISOString() };
+    this.avatars.push(newAvatar);
+    this.save();
+    return newAvatar;
+  }
+
+  delete(id) {
+    const idx = this.avatars.findIndex(item => item.id === id);
+    if (idx !== -1) {
+      const avatar = this.avatars[idx];
+      if (avatar.videoUrl && avatar.videoUrl.startsWith("/uploads/")) {
+        const filePath = path.join("public", avatar.videoUrl);
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`[CustomAvatarsDB] Deleted physical video file: ${filePath}`);
+          }
+        } catch (err) {
+          console.error(`[CustomAvatarsDB] Failed to delete file: ${filePath}`, err);
+        }
+      }
+      this.avatars.splice(idx, 1);
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  getAll() {
+    return this.avatars;
+  }
+}
+
 const dbPath = path.join("public", "uploads", "history.json");
 const db = new HistoryDB(dbPath);
+
+const customAvatarsPath = path.join("public", "uploads", "custom_avatars.json");
+const customAvatarsDb = new CustomAvatarsDB(customAvatarsPath);
 
 // Configure Multer memory storage for custom avatar uploads
 const upload = multer({
@@ -819,6 +887,45 @@ function buildAvatarGenerationPrompt(gender, framing, background) {
   return { prompt, negative_prompt };
 }
 
+// Get all custom saved avatars
+app.get("/api/custom-avatars", (req, res) => {
+  try {
+    const list = customAvatarsDb.getAll();
+    return res.status(200).json({ success: true, avatars: list });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Save a custom avatar loop
+app.post("/api/custom-avatars", (req, res) => {
+  try {
+    const { name, videoUrl } = req.body;
+    if (!name || !videoUrl) {
+      return res.status(400).json({ success: false, error: "Name and videoUrl are required." });
+    }
+    const newAvatar = customAvatarsDb.add(name, videoUrl);
+    return res.status(200).json({ success: true, avatar: newAvatar });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete a custom saved avatar
+app.delete("/api/custom-avatars/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const success = customAvatarsDb.delete(id);
+    if (success) {
+      return res.status(200).json({ success: true });
+    } else {
+      return res.status(404).json({ success: false, error: "Custom avatar not found." });
+    }
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Route: Generate a base avatar loop video (silent idle shot) via Fal.ai Kling text-to-video
 app.post("/api/generate-avatar", async (req, res) => {
   try {
@@ -1027,7 +1134,17 @@ app.post("/api/generate-video", upload.fields([
         preset_male_4: "public/presets/male_4.mp4",
         preset_male_5: "public/presets/male_5.mp4"
       };
-      rawVideoPath = presetUrls[avatarPreset] || presetUrls.preset_female_1;
+
+      if (avatarPreset && avatarPreset.startsWith("custom_")) {
+        const match = customAvatarsDb.getAll().find(a => a.id === avatarPreset);
+        if (match) {
+          rawVideoPath = path.join("public", match.videoUrl);
+        } else {
+          rawVideoPath = "public/presets/female_1.mp4";
+        }
+      } else {
+        rawVideoPath = presetUrls[avatarPreset] || presetUrls.preset_female_1;
+      }
     }
 
     // Generate jobId

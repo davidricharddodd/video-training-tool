@@ -32,7 +32,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const generateAvatarSpinner = document.getElementById("generateAvatarSpinner");
   const generatedAvatarPreviewContainer = document.getElementById("generatedAvatarPreviewContainer");
   const generatedAvatarPreviewVideo = document.getElementById("generatedAvatarPreviewVideo");
+  const saveAvatarName = document.getElementById("saveAvatarName");
+  const saveAvatarBtn = document.getElementById("saveAvatarBtn");
+  const deleteCustomAvatarBtn = document.getElementById("deleteCustomAvatarBtn");
+  const customLibraryGroup = document.getElementById("customLibraryGroup");
   let generatedAvatarUrl = null;
+  let customAvatars = [];
 
   // Branding Elements
   const logoFile = document.getElementById("logoFile");
@@ -273,6 +278,98 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Save generated avatar to custom library presets
+  saveAvatarBtn.addEventListener("click", async () => {
+    const name = saveAvatarName.value.trim();
+    if (!name) {
+      alert("Please enter a name for this custom avatar loop.");
+      return;
+    }
+    if (!generatedAvatarUrl) {
+      alert("No generated avatar loop to save.");
+      return;
+    }
+
+    saveAvatarBtn.disabled = true;
+    saveAvatarBtn.textContent = "Saving...";
+
+    try {
+      const response = await fetch("/api/custom-avatars", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, videoUrl: generatedAvatarUrl })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to save custom avatar.");
+      }
+
+      logMessage(`Custom avatar "${name}" saved to presets library!`, "success");
+      saveAvatarName.value = "";
+      
+      // Reload custom presets and select the newly saved one
+      await loadCustomAvatars();
+      avatarPreset.value = data.avatar.id;
+      
+      // Switch active avatar selector type radio to "preset"
+      const presetRadio = document.querySelector('input[name="avatarType"][value="preset"]');
+      if (presetRadio) {
+        presetRadio.checked = true;
+        presetRadio.dispatchEvent(new Event("change"));
+      }
+      
+      // Trigger preset change listener to load preview and show delete button
+      avatarPreset.dispatchEvent(new Event("change"));
+      
+    } catch (err) {
+      console.error(err);
+      alert(`Save Failed: ${err.message}`);
+    } finally {
+      saveAvatarBtn.disabled = false;
+      saveAvatarBtn.textContent = "Save to Presets";
+    }
+  });
+
+  // Delete custom saved avatar loop
+  deleteCustomAvatarBtn.addEventListener("click", async () => {
+    const selectedPreset = avatarPreset.value;
+    if (!selectedPreset || !selectedPreset.startsWith("custom_")) {
+      return;
+    }
+
+    const match = customAvatars.find(a => a.id === selectedPreset);
+    const name = match ? match.name : "this custom avatar";
+
+    if (!confirm(`Are you sure you want to delete "${name}"? This will physically remove the saved video file from the server.`)) {
+      return;
+    }
+
+    deleteCustomAvatarBtn.disabled = true;
+
+    try {
+      const response = await fetch(`/api/custom-avatars/${selectedPreset}`, {
+        method: "DELETE"
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to delete custom avatar.");
+      }
+
+      logMessage(`Custom avatar "${name}" deleted from library.`, "success");
+      
+      // Reload presets list and default back to first standard preset
+      await loadCustomAvatars();
+      avatarPreset.value = "preset_female_1";
+      avatarPreset.dispatchEvent(new Event("change"));
+
+    } catch (err) {
+      console.error(err);
+      alert(`Delete Failed: ${err.message}`);
+    } finally {
+      deleteCustomAvatarBtn.disabled = false;
+    }
+  });
+
   // Dynamic model options selection based on provider
   const modelOptions = {
     fal: [
@@ -303,6 +400,39 @@ document.addEventListener("DOMContentLoaded", () => {
   lipsyncProvider.addEventListener("change", updateModelOptions);
   updateModelOptions(); // Initialize default list on load
 
+  // Load custom avatars from library
+  async function loadCustomAvatars() {
+    try {
+      const response = await fetch("/api/custom-avatars");
+      const data = await response.json();
+      if (response.ok && data.success) {
+        customAvatars = data.avatars;
+        
+        // Populate option group
+        customLibraryGroup.innerHTML = "";
+        if (customAvatars.length === 0) {
+          const placeholder = document.createElement("option");
+          placeholder.disabled = true;
+          placeholder.textContent = "(No saved custom avatars)";
+          customLibraryGroup.appendChild(placeholder);
+        } else {
+          customAvatars.forEach(avatar => {
+            const option = document.createElement("option");
+            option.value = avatar.id;
+            option.className = "text-slate-200 normal-case";
+            option.textContent = avatar.name;
+            customLibraryGroup.appendChild(option);
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load custom avatars:", err);
+    }
+  }
+
+  // Load custom avatars on startup
+  loadCustomAvatars();
+
   // Map presets to their raw video URLs for frontend previewing
   const presetVideoUrls = {
     preset_female_1: "/presets/female_1.mp4",
@@ -321,11 +451,21 @@ document.addEventListener("DOMContentLoaded", () => {
   // Change preset preview when selection changes
   avatarPreset.addEventListener("change", (e) => {
     const selectedPreset = e.target.value;
-    const url = presetVideoUrls[selectedPreset];
+    let url;
+    if (selectedPreset && selectedPreset.startsWith("custom_")) {
+      const match = customAvatars.find(a => a.id === selectedPreset);
+      url = match ? match.videoUrl : null;
+      deleteCustomAvatarBtn.classList.remove("hidden");
+    } else {
+      url = presetVideoUrls[selectedPreset];
+      deleteCustomAvatarBtn.classList.add("hidden");
+    }
+
     if (url) {
       presetPreviewVideo.src = url;
       presetPreviewVideo.load();
       presetPreviewVideo.play().catch(err => console.log("Auto-play blocked:", err));
+      updateBrandingPreview();
     }
   });
 
