@@ -41,7 +41,11 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // Redirect to login page
+  if (req.path.startsWith("/api/")) {
+    return res.status(401).json({ success: false, error: "Unauthorized session. Please log in again." });
+  }
+
+  // Redirect to login page for browser navigation
   return res.redirect("/login");
 });
 

@@ -115,47 +115,146 @@ document.addEventListener("DOMContentLoaded", () => {
   const savedDeepgramToken = localStorage.getItem("deepgram_token");
   if (savedDeepgramToken) document.getElementById("deepgramToken").value = savedDeepgramToken;
 
+  // Client-Side Scene Breakdown & Highlight Extractor (Instant Client Execution)
+  function formatHighlightString(str) {
+    let cleaned = str.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
+    cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
+    cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
+    if (cleaned.length > 58) {
+      cleaned = cleaned.substring(0, 55).trim() + "...";
+    }
+    if (!cleaned) return "";
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  function extractHighlightsFromText(text) {
+    const cleanRaw = text.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
+    if (!cleanRaw) return [];
+
+    const rawUnits = cleanRaw.split(/(?<=[.!?;\n—–])|(?<=[,])\s+/);
+    const candidatePhrases = [];
+
+    for (let unit of rawUnits) {
+      unit = unit.trim();
+      if (!unit) continue;
+
+      if (unit.length > 65) {
+        const subParts = unit.split(/(?=\b(?:and|with|that|which|before|after|including|for)\b)/i);
+        for (let sub of subParts) {
+          const cleaned = formatHighlightString(sub);
+          if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+        }
+      } else {
+        const cleaned = formatHighlightString(unit);
+        if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+      }
+    }
+
+    const unique = [];
+    for (const p of candidatePhrases) {
+      if (!unique.includes(p) && unique.length < 4) {
+        unique.push(p);
+      }
+    }
+
+    if (unique.length < 3) {
+      const sentences = cleanRaw.match(/[^.!?]+[.!?]*/g) || [cleanRaw];
+      for (const sent of sentences) {
+        const cleaned = formatHighlightString(sent);
+        if (cleaned && !unique.includes(cleaned) && unique.length < 4) {
+          unique.push(cleaned);
+        }
+      }
+    }
+
+    while (unique.length < 3) {
+      const idx = unique.length + 1;
+      unique.push(`Key Highlight ${idx} for this section`);
+    }
+
+    return unique.slice(0, 4);
+  }
+
+  function breakdownScriptIntoScenes(rawText, targetCount = 6) {
+    if (!rawText || !rawText.trim()) return [];
+
+    const cleanText = rawText.replace(/\r?\n/g, "\n").trim();
+    let units = [];
+    const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
+    for (const para of paragraphs) {
+      const sents = para.match(/[^.!?]+[.!?]*/g) || [para];
+      for (const s of sents) {
+        if (s.trim()) units.push(s.trim());
+      }
+    }
+
+    while (units.length < targetCount) {
+      let longestIdx = -1;
+      let maxLen = 0;
+      for (let i = 0; i < units.length; i++) {
+        if (units[i].length > maxLen) {
+          maxLen = units[i].length;
+          longestIdx = i;
+        }
+      }
+      if (longestIdx === -1 || maxLen < 35) break;
+
+      const targetUnit = units[longestIdx];
+      const splitMatch = targetUnit.split(/(?<=[,;—–])\s+/);
+      if (splitMatch.length > 1) {
+        const mid = Math.floor(splitMatch.length / 2);
+        const part1 = splitMatch.slice(0, mid).join(" ");
+        const part2 = splitMatch.slice(mid).join(" ");
+        units.splice(longestIdx, 1, part1, part2);
+      } else {
+        break;
+      }
+    }
+
+    let sceneChunks = [];
+    if (units.length <= targetCount) {
+      sceneChunks = units.map(u => [u]);
+    } else {
+      const unitsPerScene = Math.ceil(units.length / targetCount);
+      for (let i = 0; i < targetCount; i++) {
+        const start = i * unitsPerScene;
+        const chunk = units.slice(start, start + unitsPerScene);
+        if (chunk.length > 0) {
+          sceneChunks.push(chunk);
+        }
+      }
+    }
+
+    return sceneChunks.map((chunkSentences, index) => {
+      const sceneText = chunkSentences.join(" ");
+      const highlights = extractHighlightsFromText(sceneText);
+      const words = sceneText.split(/\s+/).filter(Boolean);
+      const titleWords = words.slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
+      const title = `Scene ${index + 1}: ${titleWords.charAt(0).toUpperCase() + titleWords.slice(1)}...`;
+
+      return {
+        sceneIndex: index + 1,
+        title: title,
+        script: sceneText,
+        highlights: highlights
+      };
+    });
+  }
+
   // AI Scene Breakdown Core Logic
-  async function triggerSceneBreakdown(silent = false) {
-    const rawText = scriptText.value;
+  function triggerSceneBreakdown(silent = false) {
+    const rawText = scriptText ? scriptText.value : "";
     if (!rawText || !rawText.trim()) {
       if (!silent) alert("Please enter a speech script first.");
       return;
     }
 
-    if (!silent && analyzeScriptBtn) {
-      analyzeScriptBtn.disabled = true;
-      analyzeScriptBtn.innerHTML = `<span>⏳ Analyzing script into ${targetSceneCount.value} scenes...</span>`;
-    }
-
-    try {
-      const response = await fetch("/api/breakdown-scenes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: rawText,
-          targetSceneCount: targetSceneCount.value
-        })
-      });
-
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Failed to analyze scenes.");
-      }
-
-      currentScenes = data.scenes;
-      renderSceneCards(currentScenes);
-      logMessage(`Successfully analyzed script into ${currentScenes.length} scenes with 3-4 key highlight overlays!`, "success");
-    } catch (err) {
-      console.error("Scene breakdown error:", err);
-      if (!silent) alert(err.message);
-      logMessage(`Error breaking down scenes: ${err.message}`, "error");
-    } finally {
-      if (!silent && analyzeScriptBtn) {
-        analyzeScriptBtn.disabled = false;
-        analyzeScriptBtn.innerHTML = `<span>⚡ Analyze &amp; Generate Scene Breakdown</span>`;
-      }
-    }
+    const count = targetSceneCount ? (parseInt(targetSceneCount.value, 10) || 6) : 6;
+    
+    // Instant client execution
+    currentScenes = breakdownScriptIntoScenes(rawText, count);
+    renderSceneCards(currentScenes);
+    logMessage(`Successfully analyzed script into ${currentScenes.length} scenes with 3-4 key highlight overlays!`, "success");
   }
 
   // Manual Trigger
@@ -168,13 +267,16 @@ document.addEventListener("DOMContentLoaded", () => {
   const autoBreakdownDebounce = () => {
     clearTimeout(sceneDebounceTimer);
     sceneDebounceTimer = setTimeout(() => {
-      if (scriptText.value && scriptText.value.trim().length >= 10) {
+      if (scriptText && scriptText.value && scriptText.value.trim().length >= 10) {
         triggerSceneBreakdown(true);
       }
-    }, 500);
+    }, 400);
   };
 
-  scriptText.addEventListener("input", autoBreakdownDebounce);
+  if (scriptText) {
+    scriptText.addEventListener("input", autoBreakdownDebounce);
+    scriptText.addEventListener("paste", () => setTimeout(autoBreakdownDebounce, 100));
+  }
   if (targetSceneCount) {
     targetSceneCount.addEventListener("change", () => triggerSceneBreakdown(true));
   }
