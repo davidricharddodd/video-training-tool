@@ -248,26 +248,46 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // AI Scene Breakdown Core Logic
   function triggerSceneBreakdown(silent = false) {
-    const rawText = scriptText ? scriptText.value : "";
+    const textEl = document.getElementById("text");
+    const rawText = textEl ? textEl.value : "";
     if (!rawText || !rawText.trim()) {
-      if (!silent) alert("Please enter a speech script first.");
+      if (!silent) alert("Please paste or enter a speech script into the Full Script Content area first.");
       return;
     }
 
-    const count = targetSceneCount ? (parseInt(targetSceneCount.value, 10) || 6) : 6;
+    const countEl = document.getElementById("targetSceneCount");
+    const count = countEl ? (parseInt(countEl.value, 10) || 6) : 6;
     
     // Instant client execution
     currentScenes = breakdownScriptIntoScenes(rawText, count);
     renderSceneCards(currentScenes);
 
-    if (scenesContainer && !silent) {
-      scenesContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const btn = document.getElementById("analyzeScriptBtn");
+    if (btn && !silent) {
+      const originalText = btn.innerHTML;
+      btn.innerHTML = `<span>✅ ${currentScenes.length} Scenes Created!</span>`;
+      setTimeout(() => {
+        btn.innerHTML = originalText;
+      }, 2500);
     }
 
-    logMessage(`Successfully analyzed script into ${currentScenes.length} scenes with 3-4 key highlight overlays!`, "success");
+    const container = document.getElementById("scenesContainer");
+    if (container) {
+      container.classList.remove("hidden");
+      if (!silent) {
+        container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    if (typeof logMessage === "function") {
+      logMessage(`Successfully analyzed script into ${currentScenes.length} scenes with 3-4 key highlight overlays!`, "success");
+    }
   }
 
-  // Manual Trigger
+  // Expose globally for inline onclick / onpaste attributes
+  window.triggerSceneBreakdown = triggerSceneBreakdown;
+
+  // Manual Trigger Event Listener
   if (analyzeScriptBtn) {
     analyzeScriptBtn.addEventListener("click", () => triggerSceneBreakdown(false));
   }

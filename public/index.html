@@ -102,13 +102,14 @@
               </div>
             </div>
             <textarea id="text" name="text" rows="10" required
+              onpaste="setTimeout(function(){ if(window.triggerSceneBreakdown) window.triggerSceneBreakdown(true); }, 100)"
               placeholder="Paste your training script text here..."
               class="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200 resize-none h-60"></textarea>
           </div>
 
           <div class="flex items-center justify-between pt-2">
-            <button type="button" id="analyzeScriptBtn"
-              class="py-3 px-6 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-xs shadow-lg shadow-violet-950/20 flex items-center space-x-2 transition-all">
+            <button type="button" id="analyzeScriptBtn" onclick="if(window.triggerSceneBreakdown) window.triggerSceneBreakdown(false)"
+              class="py-3 px-6 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-xs shadow-lg shadow-violet-950/20 flex items-center space-x-2 transition-all cursor-pointer">
               <span>⚡ Analyze &amp; Generate Scene Breakdown</span>
             </button>
 
@@ -626,6 +627,6 @@
   </main>
 
   <!-- Script -->
-  <script src="/app.js?v=202609091648"></script>
+  <script src="/app.js?v=202609091651"></script>
 </body>
 </html>
