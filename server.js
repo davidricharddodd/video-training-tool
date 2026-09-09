@@ -312,71 +312,84 @@ const upload = multer({
   },
 });
 
-// Helper to apply branded background and logo watermarks using FFmpeg
-function applyBrandingAndWatermark(inputVideoPath, bgPath, bgPresenterAlign, logoPath, logoPosition, outputVideoPath) {
-  return new Promise((resolve, reject) => {
-    if (!bgPath && !logoPath) {
-      fs.copyFileSync(inputVideoPath, outputVideoPath);
-      return resolve();
-    }
+// Helper to apply branded background, logo watermarks, and scene highlight overlays using FFmpeg
+async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenterAlign, logoPath, logoPosition, scenes, audioDuration, outputVideoPath) {
+  if ((!scenes || scenes.length === 0) && !bgPath && !logoPath) {
+    fs.copyFileSync(inputVideoPath, outputVideoPath);
+    return;
+  }
 
-    const inputs = [];
+  const tempOutputDir = os.tmpdir();
+  const tempFiles = [];
+
+  try {
+    const inputs = [`-i "${inputVideoPath}"`];
+    let nextInputIdx = 1;
     const filterParts = [];
-    let audioMap = "-map 0:a";
+    let currentStream = "0:v";
+    let audioMapStream = "0:a";
 
+    // 1. If background replacement requested
     if (bgPath) {
       inputs.push(`-i "${bgPath}"`);
-      inputs.push(`-i "${inputVideoPath}"`);
-      audioMap = "-map 1:a";
+      const bgIdx = nextInputIdx++;
+      audioMapStream = "0:a";
 
       let xPos = "W-w-100";
       if (bgPresenterAlign === "left") xPos = "100";
       else if (bgPresenterAlign === "center") xPos = "(W-w)/2";
 
-      filterParts.push(`[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080[bg]`);
-      filterParts.push(`[1:v]scale=-2:1080[fg]`);
-      
-      if (logoPath) {
-        inputs.push(`-i "${logoPath}"`);
-        filterParts.push(`[bg][fg]overlay=x=${xPos}:y=(H-h)/2[tmp]`);
-        filterParts.push(`[2:v]scale=180:-1[logo]`);
-        
-        let logoOverlay = "W-w-20:20";
-        if (logoPosition === "top_left") logoOverlay = "20:20";
-        else if (logoPosition === "bottom_right") logoOverlay = "W-w-20:H-h-20";
-        else if (logoPosition === "bottom_left") logoOverlay = "20:H-h-20";
+      filterParts.push(`[${bgIdx}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080[bg]`);
+      filterParts.push(`[0:v]scale=-2:1080[fg]`);
+      filterParts.push(`[bg][fg]overlay=x=${xPos}:y=(H-h)/2[v_bg]`);
+      currentStream = "v_bg";
+    }
 
-        filterParts.push(`[tmp][logo]overlay=${logoOverlay}[outv]`);
-      } else {
-        filterParts.push(`[bg][fg]overlay=x=${xPos}:y=(H-h)/2[outv]`);
+    // 2. Add Scene Highlight SVG Overlays if scenes are provided
+    if (scenes && scenes.length > 0) {
+      const sceneDuration = (audioDuration || 60) / scenes.length;
+
+      for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        const svgContent = generateSceneOverlaySvg(scene.highlights, scene.title, scene.sceneIndex || (i + 1));
+        const svgPath = path.join(tempOutputDir, `scene_overlay_${Date.now()}_${i}.svg`);
+        fs.writeFileSync(svgPath, svgContent);
+        tempFiles.push(svgPath);
+
+        inputs.push(`-i "${svgPath}"`);
+        const overlayIdx = nextInputIdx++;
+        const startTime = (i * sceneDuration).toFixed(2);
+        const endTime = ((i + 1) * sceneDuration).toFixed(2);
+        const outStreamName = `v_scene_${i}`;
+
+        filterParts.push(`[${currentStream}][${overlayIdx}:v]overlay=0:0:enable='between(t,${startTime},${endTime})'[${outStreamName}]`);
+        currentStream = outStreamName;
       }
-    } else if (logoPath) {
-      inputs.push(`-i "${inputVideoPath}"`);
-      inputs.push(`-i "${logoPath}"`);
-      audioMap = "-map 0:a";
+    }
 
-      filterParts.push(`[1:v]scale=180:-1[logo]`);
-      
+    // 3. Add Logo Watermark if provided
+    if (logoPath) {
+      inputs.push(`-i "${logoPath}"`);
+      const logoIdx = nextInputIdx++;
+      filterParts.push(`[${logoIdx}:v]scale=180:-1[logo]`);
       let logoOverlay = "W-w-20:20";
       if (logoPosition === "top_left") logoOverlay = "20:20";
       else if (logoPosition === "bottom_right") logoOverlay = "W-w-20:H-h-20";
       else if (logoPosition === "bottom_left") logoOverlay = "20:H-h-20";
 
-      filterParts.push(`[0:v][logo]overlay=${logoOverlay}[outv]`);
+      filterParts.push(`[${currentStream}][logo]overlay=${logoOverlay}[v_final]`);
+      currentStream = "v_final";
     }
 
-    const filterComplex = `-filter_complex "${filterParts.join('; ')}" -map "[outv]" ${audioMap}`;
-    const command = `ffmpeg -y ${inputs.join(' ')} ${filterComplex} -c:v libx264 -c:a aac -pix_fmt yuv420p "${outputVideoPath}"`;
+    const filterComplexStr = filterParts.join("; ");
+    const command = `ffmpeg -y ${inputs.join(" ")} -filter_complex "${filterComplexStr}" -map "[${currentStream}]" -map ${audioMapStream} -c:v libx264 -c:a aac -pix_fmt yuv420p "${outputVideoPath}"`;
 
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error("FFmpeg branding error:", error);
-        console.error("FFmpeg stderr:", stderr);
-        return reject(error);
-      }
-      resolve();
-    });
-  });
+    console.log(`[Video Composition] Executing scene overlay & branding filter...`);
+    await execPromise(command);
+
+  } finally {
+    cleanUpTempFiles(tempFiles);
+  }
 }
 
 
@@ -555,6 +568,129 @@ function splitTextIntoChunks(text, maxChars = 250) {
   return finalParts;
 }
 
+// Helper: Format bullet point strings cleanly
+function formatHighlightString(str) {
+  let cleaned = str.replace(/^[^a-zA-Z0-9]+/, "").trim();
+  if (cleaned.length > 55) {
+    cleaned = cleaned.substring(0, 52) + "...";
+  }
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+// Helper: Extract 3-4 concise bullet points from a scene's text
+function extractHighlightsFromText(text) {
+  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
+  const highlights = [];
+
+  for (const sentence of sentences) {
+    const clean = sentence.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
+    if (!clean) continue;
+
+    const clauses = clean.split(/[,;—–]|\b(and|with|that|which|before|after|including)\b/i)
+      .map(c => c ? c.trim() : "")
+      .filter(c => c.length >= 10 && !/^(and|with|that|which|before|after|including)$/i.test(c));
+
+    if (clauses.length > 1) {
+      for (const clause of clauses) {
+        if (highlights.length < 4 && clause.length >= 12) {
+          highlights.push(formatHighlightString(clause));
+        }
+      }
+    } else {
+      if (highlights.length < 4 && clean.length >= 12) {
+        highlights.push(formatHighlightString(clean));
+      }
+    }
+  }
+
+  while (highlights.length < 3) {
+    const idx = highlights.length + 1;
+    const words = text.split(/\s+/).filter(Boolean);
+    const slice = words.slice((idx - 1) * 5, idx * 5).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
+    highlights.push(formatHighlightString(slice || `Key Point ${idx} for this section`));
+  }
+
+  return highlights.slice(0, 4);
+}
+
+// Helper: Intelligent Scene Breakdown into targetCount scenes (default 6)
+function breakdownScriptIntoScenes(rawText, targetCount = 6) {
+  if (!rawText || !rawText.trim()) return [];
+
+  const cleanText = rawText.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
+  const sentences = cleanText.match(/[^.!?]+[.!?]*/g) || [cleanText];
+  const cleanedSentences = sentences.map(s => s.trim()).filter(Boolean);
+
+  let sceneChunks = [];
+  if (cleanedSentences.length <= targetCount) {
+    sceneChunks = cleanedSentences.map(s => [s]);
+  } else {
+    const sentencesPerScene = Math.ceil(cleanedSentences.length / targetCount);
+    for (let i = 0; i < targetCount; i++) {
+      const start = i * sentencesPerScene;
+      const chunk = cleanedSentences.slice(start, start + sentencesPerScene);
+      if (chunk.length > 0) {
+        sceneChunks.push(chunk);
+      }
+    }
+  }
+
+  return sceneChunks.map((chunkSentences, index) => {
+    const sceneText = chunkSentences.join(" ");
+    const highlights = extractHighlightsFromText(sceneText);
+    const words = sceneText.split(/\s+/).slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
+    const title = `Scene ${index + 1}: ${words.charAt(0).toUpperCase() + words.slice(1)}...`;
+
+    return {
+      sceneIndex: index + 1,
+      title: title,
+      script: sceneText,
+      highlights: highlights
+    };
+  });
+}
+
+// Helper to generate a clean, modern SVG slide overlay card with 3-4 bullet points
+function generateSceneOverlaySvg(highlights, title, sceneIndex) {
+  const safeTitle = (title || `Scene ${sceneIndex}`).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  
+  const bulletLines = (highlights || []).slice(0, 4).map((h, i) => {
+    const yText = 300 + (i * 75);
+    const yDot = yText - 5;
+    const safeH = String(h).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `
+    <circle cx="1255" cy="${yDot}" r="7" fill="#a78bfa" />
+    <text x="1275" y="${yText}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="500" fill="#f1f5f9">${safeH}</text>
+    `;
+  }).join("\n");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#1e1b4b" stop-opacity="0.94"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#d946ef"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Right-Side Highlight Card Overlay -->
+  <rect x="1200" y="140" width="660" height="800" rx="24" fill="url(#bgGrad)" stroke="#334155" stroke-width="2"/>
+  <rect x="1200" y="140" width="660" height="6" rx="3" fill="url(#accentGrad)"/>
+
+  <!-- Badge & Header Title -->
+  <rect x="1240" y="180" width="150" height="28" rx="6" fill="#7c3aed" fill-opacity="0.3" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="1315" y="199" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="bold" fill="#ddd6fe" text-anchor="middle" letter-spacing="1">KEY SCENE HIGHLIGHTS</text>
+
+  <text x="1240" y="245" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="bold" fill="#ffffff">${safeTitle}</text>
+
+  <!-- Dynamic Bullet Points -->
+  ${bulletLines}
+</svg>`;
+}
+
 // Helper to run Replicate prediction with automatic rate-limit retry pacing
 async function runWithRetry(replicate, model, options, retries = 6, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -646,6 +782,28 @@ async function runDeepgramTTS(text, voice, apiKey, outputPath) {
   fs.writeFileSync(outputPath, Buffer.from(arrayBuffer));
   return outputPath;
 }
+
+// Route: Analyze script and break down into N scenes with 3-4 key highlights
+app.post("/api/breakdown-scenes", (req, res) => {
+  try {
+    const { text, targetSceneCount } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ success: false, error: "Text script cannot be empty." });
+    }
+
+    const count = parseInt(targetSceneCount, 10) || 6;
+    const scenes = breakdownScriptIntoScenes(text, count);
+
+    return res.status(200).json({
+      success: true,
+      scenes: scenes,
+      totalScenes: scenes.length
+    });
+  } catch (err) {
+    console.error("Scene breakdown error:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Route 1: Generate Audio Preview (supporting custom [pause X.X] markers and long-form scripts)
 app.post("/api/generate-audio", async (req, res) => {
@@ -1112,7 +1270,15 @@ app.post("/api/generate-video", upload.fields([
   { name: "bgFile", maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer, logoPosition, bgPresenterAlign } = req.body;
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer, logoPosition, bgPresenterAlign, scenes: scenesRaw } = req.body;
+    let scenes = [];
+    if (scenesRaw) {
+      try {
+        scenes = typeof scenesRaw === "string" ? JSON.parse(scenesRaw) : scenesRaw;
+      } catch (e) {
+        console.error("Failed to parse scenes parameter:", e);
+      }
+    }
     const provider = lipsyncProvider || "replicate";
     const runFaceEnhancer = faceEnhancer === "true" || faceEnhancer === true;
 
@@ -1511,9 +1677,9 @@ app.post("/api/generate-video", upload.fields([
           }
         }
 
-        // 5. Apply Video Branding & Background Layouts
-        if ((logoPath || bgPath) && videoUrl) {
-          addJobLog(jobId, "Applying Video Branding & Background Layouts...");
+        // 5. Apply Video Branding, Background Layouts & Scene Highlight Overlays
+        if ((logoPath || bgPath || (scenes && scenes.length > 0)) && videoUrl) {
+          addJobLog(jobId, "Applying Video Branding & Scene Highlight Overlays...");
           const brandedFilename = `branded_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`;
           const brandedOutputPath = path.join("public", "uploads", brandedFilename);
 
@@ -1531,19 +1697,22 @@ app.post("/api/generate-video", upload.fields([
           }
 
           try {
-            await applyBrandingAndWatermark(
+            const totalAudioDuration = await getDuration(localAudioPath);
+            await applySceneOverlaysAndBranding(
               localProcessingVideoPath,
               bgPath,
               bgPresenterAlign,
               logoPath,
               logoPosition,
+              scenes,
+              totalAudioDuration,
               brandedOutputPath
             );
             videoUrl = `/uploads/${brandedFilename}`;
-            addJobLog(jobId, `Branding and layout composition complete. Final video path: ${videoUrl}`);
+            addJobLog(jobId, `Branding and scene overlay composition complete. Final video path: ${videoUrl}`);
           } catch (brandingError) {
-            console.error("Branding failed:", brandingError);
-            addJobLog(jobId, `Warning: Branding failed: ${brandingError.message}. Using default output.`);
+            console.error("Branding/Overlay failed:", brandingError);
+            addJobLog(jobId, `Warning: Scene overlay composition failed: ${brandingError.message}. Using default output.`);
           }
         }
 
