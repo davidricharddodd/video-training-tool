@@ -1,3 +1,249 @@
+// Global Scene Breakdown State & Functions (Top-Level Execution)
+window.currentScenes = [];
+
+window.formatHighlightString = function(str) {
+  let cleaned = str.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
+  cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
+  cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
+  if (cleaned.length > 58) {
+    cleaned = cleaned.substring(0, 55).trim() + "...";
+  }
+  if (!cleaned) return "";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+};
+
+window.extractHighlightsFromText = function(text) {
+  const cleanRaw = text.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
+  if (!cleanRaw) return [];
+
+  const rawUnits = cleanRaw.split(/[\n;—–\.\!\?]+|,\s+/);
+  const candidatePhrases = [];
+
+  for (let unit of rawUnits) {
+    unit = unit.trim();
+    if (!unit) continue;
+
+    if (unit.length > 65) {
+      const subParts = unit.split(/\b(?:and|with|that|which|before|after|including|for)\b/i);
+      for (let sub of subParts) {
+        const cleaned = window.formatHighlightString(sub);
+        if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+      }
+    } else {
+      const cleaned = window.formatHighlightString(unit);
+      if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+    }
+  }
+
+  const unique = [];
+  for (const p of candidatePhrases) {
+    if (!unique.includes(p) && unique.length < 4) {
+      unique.push(p);
+    }
+  }
+
+  if (unique.length < 3) {
+    const sentences = cleanRaw.split(/[\.\!\?]+/).filter(Boolean);
+    for (const sent of sentences) {
+      const cleaned = window.formatHighlightString(sent);
+      if (cleaned && !unique.includes(cleaned) && unique.length < 4) {
+        unique.push(cleaned);
+      }
+    }
+  }
+
+  while (unique.length < 3) {
+    const idx = unique.length + 1;
+    unique.push(`Key Highlight ${idx} for this section`);
+  }
+
+  return unique.slice(0, 4);
+};
+
+window.breakdownScriptIntoScenes = function(rawText, targetCount = 6) {
+  if (!rawText || !rawText.trim()) return [];
+
+  const cleanText = rawText.replace(/\r?\n/g, "\n").trim();
+  let units = [];
+  const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
+  for (const para of paragraphs) {
+    const sents = para.split(/[\.\!\?]+/).map(s => s.trim()).filter(Boolean);
+    for (const s of sents) {
+      if (s.trim()) units.push(s.trim());
+    }
+  }
+
+  while (units.length < targetCount) {
+    let longestIdx = -1;
+    let maxLen = 0;
+    for (let i = 0; i < units.length; i++) {
+      if (units[i].length > maxLen) {
+        maxLen = units[i].length;
+        longestIdx = i;
+      }
+    }
+    if (longestIdx === -1 || maxLen < 35) break;
+
+    const targetUnit = units[longestIdx];
+    const splitMatch = targetUnit.split(/[,;—–]\s+/);
+    if (splitMatch.length > 1) {
+      const mid = Math.floor(splitMatch.length / 2);
+      const part1 = splitMatch.slice(0, mid).join(" ");
+      const part2 = splitMatch.slice(mid).join(" ");
+      units.splice(longestIdx, 1, part1, part2);
+    } else {
+      break;
+    }
+  }
+
+  let sceneChunks = [];
+  if (units.length <= targetCount) {
+    sceneChunks = units.map(u => [u]);
+  } else {
+    const unitsPerScene = Math.ceil(units.length / targetCount);
+    for (let i = 0; i < targetCount; i++) {
+      const start = i * unitsPerScene;
+      const chunk = units.slice(start, start + unitsPerScene);
+      if (chunk.length > 0) {
+        sceneChunks.push(chunk);
+      }
+    }
+  }
+
+  return sceneChunks.map((chunkSentences, index) => {
+    const sceneText = chunkSentences.join(" ");
+    const highlights = window.extractHighlightsFromText(sceneText);
+    const words = sceneText.split(/\s+/).filter(Boolean);
+    const titleWords = words.slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
+    const title = `Scene ${index + 1}: ${titleWords.charAt(0).toUpperCase() + titleWords.slice(1)}...`;
+
+    return {
+      sceneIndex: index + 1,
+      title: title,
+      script: sceneText,
+      highlights: highlights
+    };
+  });
+};
+
+window.renderSceneCards = function(scenes) {
+  const sceneCardsGrid = document.getElementById("sceneCardsGrid");
+  const scenesContainer = document.getElementById("scenesContainer");
+  const sceneCountLabel = document.getElementById("sceneCountLabel");
+
+  if (!sceneCardsGrid || !scenesContainer) return;
+
+  sceneCardsGrid.innerHTML = "";
+  if (!scenes || scenes.length === 0) {
+    scenesContainer.classList.add("hidden");
+    scenesContainer.style.display = "none";
+    return;
+  }
+
+  if (sceneCountLabel) {
+    sceneCountLabel.textContent = `${scenes.length} Scenes Active`;
+  }
+
+  scenesContainer.classList.remove("hidden");
+  scenesContainer.style.display = "block";
+
+  scenes.forEach((scene, index) => {
+    const card = document.createElement("div");
+    card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner";
+
+    const safeTitle = String((scene && scene.title) || `Scene ${index + 1}`).replace(/"/g, '&quot;');
+    const safeScript = String((scene && scene.script) || '');
+
+    const highlightsHtml = ((scene && scene.highlights) || []).map((hl, hIdx) => {
+      const safeHl = String(hl || '').replace(/"/g, '&quot;');
+      return `
+      <div class="flex items-center space-x-2">
+        <span class="h-2 w-2 rounded-full bg-violet-400 flex-shrink-0"></span>
+        <input type="text" value="${safeHl}" data-scene="${index}" data-highlight="${hIdx}"
+          class="scene-highlight-input w-full px-2.5 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 focus:border-violet-500 focus:outline-none transition-all" />
+      </div>
+    `;
+    }).join("");
+
+    card.innerHTML = `
+      <div class="flex items-center justify-between border-b border-slate-850 pb-2">
+        <input type="text" value="${safeTitle}" data-scene="${index}" field="title"
+          class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full" />
+        <span class="text-[10px] bg-violet-950/60 text-violet-300 px-2 py-0.5 rounded border border-violet-800 font-semibold flex-shrink-0">Scene ${index + 1}</span>
+      </div>
+      <div>
+        <label class="block text-[9px] uppercase font-semibold text-slate-500 mb-1">Scene Script Segment</label>
+        <textarea data-scene="${index}" field="script" rows="2"
+          class="scene-script-input w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-300 focus:border-violet-500 focus:outline-none resize-none">${safeScript}</textarea>
+      </div>
+      <div>
+        <label class="block text-[9px] uppercase font-semibold text-slate-500 mb-1.5">3-4 On-Screen Key Highlights</label>
+        <div class="space-y-1.5">
+          ${highlightsHtml}
+        </div>
+      </div>
+    `;
+    sceneCardsGrid.appendChild(card);
+  });
+
+  document.querySelectorAll(".scene-title-input").forEach(input => {
+    input.addEventListener("input", (e) => {
+      const idx = parseInt(e.target.getAttribute("data-scene"), 10);
+      if (window.currentScenes[idx]) window.currentScenes[idx].title = e.target.value;
+    });
+  });
+
+  document.querySelectorAll(".scene-script-input").forEach(input => {
+    input.addEventListener("input", (e) => {
+      const idx = parseInt(e.target.getAttribute("data-scene"), 10);
+      if (window.currentScenes[idx]) window.currentScenes[idx].script = e.target.value;
+    });
+  });
+
+  document.querySelectorAll(".scene-highlight-input").forEach(input => {
+    input.addEventListener("input", (e) => {
+      const sIdx = parseInt(e.target.getAttribute("data-scene"), 10);
+      const hIdx = parseInt(e.target.getAttribute("data-highlight"), 10);
+      if (window.currentScenes[sIdx] && window.currentScenes[sIdx].highlights) {
+        window.currentScenes[sIdx].highlights[hIdx] = e.target.value;
+      }
+    });
+  });
+};
+
+window.triggerSceneBreakdown = function(silent = false) {
+  const textEl = document.getElementById("text");
+  const rawText = textEl ? textEl.value : "";
+  if (!rawText || !rawText.trim()) {
+    if (!silent) alert("Please paste or type a speech script into the Full Script Content text area first.");
+    return;
+  }
+
+  const countEl = document.getElementById("targetSceneCount");
+  const count = countEl ? (parseInt(countEl.value, 10) || 6) : 6;
+
+  window.currentScenes = window.breakdownScriptIntoScenes(rawText, count);
+  window.renderSceneCards(window.currentScenes);
+
+  const btn = document.getElementById("analyzeScriptBtn");
+  if (btn) {
+    const originalContent = btn.innerHTML;
+    btn.innerHTML = `<span>✅ ${window.currentScenes.length} Scenes Generated!</span>`;
+    setTimeout(() => {
+      btn.innerHTML = originalContent;
+    }, 3000);
+  }
+
+  const container = document.getElementById("scenesContainer");
+  if (container) {
+    container.classList.remove("hidden");
+    container.style.display = "block";
+    if (!silent) {
+      container.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+};
+
 document.addEventListener("DOMContentLoaded", () => {
   const generateAudioBtn = document.getElementById("generateAudioBtn");
   const audioSpinner = document.getElementById("audioSpinner");
@@ -16,58 +262,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const scenesContainer = document.getElementById("scenesContainer");
   const sceneCardsGrid = document.getElementById("sceneCardsGrid");
   const sceneCountLabel = document.getElementById("sceneCountLabel");
-  let currentScenes = [];
 
-  // Conditionally visible containers
-  const avatarTypeRadios = document.querySelectorAll('input[name="avatarType"]');
-  const avatarPresetContainer = document.getElementById("avatarPresetContainer");
-  const avatarPreset = document.getElementById("avatarPreset");
-  const lipsyncProvider = document.getElementById("lipsyncProvider");
-  const lipsyncEngine = document.getElementById("lipsyncEngine");
-  const avatarUrlContainer = document.getElementById("avatarUrlContainer");
-  const avatarUploadContainer = document.getElementById("avatarUploadContainer");
-  const avatarFile = document.getElementById("avatarFile");
-  const uploadFilename = document.getElementById("uploadFilename");
-
-  // Avatar Generation Elements
-  const avatarGenerateContainer = document.getElementById("avatarGenerateContainer");
-  const genAvatarGender = document.getElementById("genAvatarGender");
-  const genAvatarFraming = document.getElementById("genAvatarFraming");
-  const genAvatarEthnicity = document.getElementById("genAvatarEthnicity");
-  const genAvatarAge = document.getElementById("genAvatarAge");
-  const genAvatarBackground = document.getElementById("genAvatarBackground");
-  const generateAvatarBtn = document.getElementById("generateAvatarBtn");
-  const generateAvatarBtnLabel = document.getElementById("generateAvatarBtnLabel");
-  const generateAvatarSpinner = document.getElementById("generateAvatarSpinner");
-  const deleteCustomAvatarBtn = document.getElementById("deleteCustomAvatarBtn");
-  const customAvatarsOptGroup = document.getElementById("customAvatarsOptGroup");
-  let customAvatars = [];
-
-  // Branding Elements
-  const logoFile = document.getElementById("logoFile");
-  const logoPosition = document.getElementById("logoPosition");
-
-  // Summary labels
-  const summaryVoiceLabel = document.getElementById("summaryVoiceLabel");
-  const summaryEngineLabel = document.getElementById("summaryEngineLabel");
-  const summaryScenesLabel = document.getElementById("summaryScenesLabel");
-
-  // Output containers
-  const idleState = document.getElementById("idleState");
-  const loadingState = document.getElementById("loadingState");
-  const successState = document.getElementById("successState");
-  const currentStepTitle = document.getElementById("currentStepTitle");
-  const currentStepDetail = document.getElementById("currentStepDetail");
-  const progressBar = document.getElementById("progressBar");
-  
-  const outputVideoPlayer = document.getElementById("outputVideoPlayer");
-  const videoSource = document.getElementById("videoSource");
-  const downloadBtn = document.getElementById("downloadBtn");
-  
-  const consoleLogs = document.getElementById("consoleLogs");
-  const clearLogsBtn = document.getElementById("clearLogsBtn");
-
-  // Tab Navigation Manager
+  // Navigation handlers
   const tabBtns = document.querySelectorAll(".wizard-tab-btn");
   const tabContents = document.querySelectorAll(".tab-content");
 
@@ -88,11 +284,10 @@ document.addEventListener("DOMContentLoaded", () => {
       content.classList.toggle("hidden", !isTarget);
     });
 
-    // Update Summary Card
     if (String(tabNum) === "4") {
-      summaryVoiceLabel.textContent = voiceSelect.options[voiceSelect.selectedIndex].text;
-      summaryEngineLabel.textContent = lipsyncEngine.options[lipsyncEngine.selectedIndex] ? lipsyncEngine.options[lipsyncEngine.selectedIndex].text : lipsyncProvider.value;
-      summaryScenesLabel.textContent = currentScenes.length > 0 ? `${currentScenes.length} Scenes Ready` : "Full Script (1 Scene)";
+      if (summaryVoiceLabel) summaryVoiceLabel.textContent = voiceSelect.options[voiceSelect.selectedIndex].text;
+      if (summaryEngineLabel) summaryEngineLabel.textContent = lipsyncEngine.options[lipsyncEngine.selectedIndex] ? lipsyncEngine.options[lipsyncEngine.selectedIndex].text : lipsyncProvider.value;
+      if (summaryScenesLabel) summaryScenesLabel.textContent = window.currentScenes.length > 0 ? `${window.currentScenes.length} Scenes Ready` : "Full Script (1 Scene)";
     }
   }
 
@@ -103,209 +298,14 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".nav-next-btn, .nav-prev-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-target");
-      if (target === "2" && (!currentScenes || currentScenes.length === 0)) {
+      if (target === "2" && (!window.currentScenes || window.currentScenes.length === 0)) {
         if (scriptText && scriptText.value && scriptText.value.trim()) {
-          triggerSceneBreakdown(true);
+          window.triggerSceneBreakdown(true);
         }
       }
       if (target) switchTab(target);
     });
   });
-
-  // Initialize LocalStorage Tokens
-  const savedToken = localStorage.getItem("replicate_token");
-  if (savedToken) document.getElementById("customToken").value = savedToken;
-  const savedFalToken = localStorage.getItem("fal_token");
-  if (savedFalToken) document.getElementById("falToken").value = savedFalToken;
-  const savedDeepgramToken = localStorage.getItem("deepgram_token");
-  if (savedDeepgramToken) document.getElementById("deepgramToken").value = savedDeepgramToken;
-
-  // Client-Side Scene Breakdown & Highlight Extractor (Instant Client Execution)
-  function formatHighlightString(str) {
-    let cleaned = str.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
-    cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
-    cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
-    if (cleaned.length > 58) {
-      cleaned = cleaned.substring(0, 55).trim() + "...";
-    }
-    if (!cleaned) return "";
-    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-  }
-
-  function extractHighlightsFromText(text) {
-    const cleanRaw = text.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
-    if (!cleanRaw) return [];
-
-    const rawUnits = cleanRaw.split(/[\n;—–\.\!\?]+|,\s+/);
-    const candidatePhrases = [];
-
-    for (let unit of rawUnits) {
-      unit = unit.trim();
-      if (!unit) continue;
-
-      if (unit.length > 65) {
-        const subParts = unit.split(/\b(?:and|with|that|which|before|after|including|for)\b/i);
-        for (let sub of subParts) {
-          const cleaned = formatHighlightString(sub);
-          if (cleaned.length >= 10) candidatePhrases.push(cleaned);
-        }
-      } else {
-        const cleaned = formatHighlightString(unit);
-        if (cleaned.length >= 10) candidatePhrases.push(cleaned);
-      }
-    }
-
-    const unique = [];
-    for (const p of candidatePhrases) {
-      if (!unique.includes(p) && unique.length < 4) {
-        unique.push(p);
-      }
-    }
-
-    if (unique.length < 3) {
-      const sentences = cleanRaw.split(/[\.\!\?]+/).filter(Boolean);
-      for (const sent of sentences) {
-        const cleaned = formatHighlightString(sent);
-        if (cleaned && !unique.includes(cleaned) && unique.length < 4) {
-          unique.push(cleaned);
-        }
-      }
-    }
-
-    while (unique.length < 3) {
-      const idx = unique.length + 1;
-      unique.push(`Key Highlight ${idx} for this section`);
-    }
-
-    return unique.slice(0, 4);
-  }
-
-  function breakdownScriptIntoScenes(rawText, targetCount = 6) {
-    if (!rawText || !rawText.trim()) return [];
-
-    const cleanText = rawText.replace(/\r?\n/g, "\n").trim();
-    let units = [];
-    const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
-    for (const para of paragraphs) {
-      const sents = para.split(/[\.\!\?]+/).map(s => s.trim()).filter(Boolean);
-      for (const s of sents) {
-        if (s.trim()) units.push(s.trim());
-      }
-    }
-
-    while (units.length < targetCount) {
-      let longestIdx = -1;
-      let maxLen = 0;
-      for (let i = 0; i < units.length; i++) {
-        if (units[i].length > maxLen) {
-          maxLen = units[i].length;
-          longestIdx = i;
-        }
-      }
-      if (longestIdx === -1 || maxLen < 35) break;
-
-      const targetUnit = units[longestIdx];
-      const splitMatch = targetUnit.split(/[,;—–]\s+/);
-      if (splitMatch.length > 1) {
-        const mid = Math.floor(splitMatch.length / 2);
-        const part1 = splitMatch.slice(0, mid).join(" ");
-        const part2 = splitMatch.slice(mid).join(" ");
-        units.splice(longestIdx, 1, part1, part2);
-      } else {
-        break;
-      }
-    }
-
-    let sceneChunks = [];
-    if (units.length <= targetCount) {
-      sceneChunks = units.map(u => [u]);
-    } else {
-      const unitsPerScene = Math.ceil(units.length / targetCount);
-      for (let i = 0; i < targetCount; i++) {
-        const start = i * unitsPerScene;
-        const chunk = units.slice(start, start + unitsPerScene);
-        if (chunk.length > 0) {
-          sceneChunks.push(chunk);
-        }
-      }
-    }
-
-    return sceneChunks.map((chunkSentences, index) => {
-      const sceneText = chunkSentences.join(" ");
-      const highlights = extractHighlightsFromText(sceneText);
-      const words = sceneText.split(/\s+/).filter(Boolean);
-      const titleWords = words.slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
-      const title = `Scene ${index + 1}: ${titleWords.charAt(0).toUpperCase() + titleWords.slice(1)}...`;
-
-      return {
-        sceneIndex: index + 1,
-        title: title,
-        script: sceneText,
-        highlights: highlights
-      };
-    });
-  }
-
-  // AI Scene Breakdown Core Logic
-  function triggerSceneBreakdown(silent = false) {
-    const textEl = document.getElementById("text");
-    const rawText = textEl ? textEl.value : "";
-    if (!rawText || !rawText.trim()) {
-      if (!silent) alert("Please paste or enter a speech script into the Full Script Content area first.");
-      return;
-    }
-
-    const countEl = document.getElementById("targetSceneCount");
-    const count = countEl ? (parseInt(countEl.value, 10) || 6) : 6;
-    
-    // Instant client execution
-    currentScenes = breakdownScriptIntoScenes(rawText, count);
-    renderSceneCards(currentScenes);
-
-    const btn = document.getElementById("analyzeScriptBtn");
-    if (btn && !silent) {
-      const originalText = btn.innerHTML;
-      btn.innerHTML = `<span>✅ ${currentScenes.length} Scenes Created!</span>`;
-      setTimeout(() => {
-        btn.innerHTML = originalText;
-      }, 2500);
-    }
-
-    const container = document.getElementById("scenesContainer");
-    if (container) {
-      container.classList.remove("hidden");
-      if (!silent) {
-        container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    }
-
-    if (typeof logMessage === "function") {
-      logMessage(`Successfully analyzed script into ${currentScenes.length} scenes with 3-4 key highlight overlays!`, "success");
-    }
-  }
-
-  // Expose globally for inline onclick / onpaste attributes
-  window.triggerSceneBreakdown = triggerSceneBreakdown;
-
-  // Manual Trigger Event Listener
-  if (analyzeScriptBtn) {
-    analyzeScriptBtn.addEventListener("click", () => triggerSceneBreakdown(false));
-  }
-
-  // Auto-trigger on paste or scene count dropdown change
-  if (scriptText) {
-    scriptText.addEventListener("paste", () => {
-      setTimeout(() => {
-        if (scriptText.value && scriptText.value.trim().length >= 10) {
-          triggerSceneBreakdown(true);
-        }
-      }, 100);
-    });
-  }
-
-  if (targetSceneCount) {
-    targetSceneCount.addEventListener("change", () => triggerSceneBreakdown(true));
-  }
 
   function renderSceneCards(scenes) {
     sceneCardsGrid.innerHTML = "";
@@ -698,14 +698,14 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("logoPosition", logoPosition.value);
     formData.append("bgPresenterAlign", "right");
 
-    if (!currentScenes || currentScenes.length === 0) {
+    if (!window.currentScenes || window.currentScenes.length === 0) {
       if (scriptText.value && scriptText.value.trim()) {
-        await triggerSceneBreakdown(true);
+        window.triggerSceneBreakdown(true);
       }
     }
 
-    if (currentScenes && currentScenes.length > 0) {
-      formData.append("scenes", JSON.stringify(currentScenes));
+    if (window.currentScenes && window.currentScenes.length > 0) {
+      formData.append("scenes", JSON.stringify(window.currentScenes));
     }
 
     if (logoFile.files.length > 0) {
