@@ -21,10 +21,23 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Global Process Exception Handlers to prevent container crashes
+process.on("uncaughtException", (err) => {
+  console.error("[CRITICAL] Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[CRITICAL] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+// Health check routes (unauthenticated)
+app.get("/health", (req, res) => res.status(200).send("OK"));
+app.get("/api/health", (req, res) => res.status(200).json({ status: "ok", timestamp: new Date().toISOString() }));
+
 // Auth Middleware
 app.use((req, res, next) => {
-  // Allow login page, assets, and api login endpoint without authentication
-  if (req.path === "/login" || req.path === "/api/login" || req.path === "/favicon.ico" || req.path.startsWith("/uploads/")) {
+  // Allow login page, assets, health checks, and api login endpoint without authentication
+  if (req.path === "/login" || req.path === "/api/login" || req.path === "/health" || req.path === "/api/health" || req.path === "/favicon.ico" || req.path.startsWith("/uploads/")) {
     return next();
   }
 
