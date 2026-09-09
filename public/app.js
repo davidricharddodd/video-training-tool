@@ -193,24 +193,30 @@ document.addEventListener("DOMContentLoaded", () => {
       const card = document.createElement("div");
       card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner";
 
-      const highlightsHtml = (scene.highlights || []).map((hl, hIdx) => `
+      const safeTitle = String((scene && scene.title) || `Scene ${index + 1}`).replace(/"/g, '&quot;');
+      const safeScript = String((scene && scene.script) || '');
+
+      const highlightsHtml = ((scene && scene.highlights) || []).map((hl, hIdx) => {
+        const safeHl = String(hl || '').replace(/"/g, '&quot;');
+        return `
         <div class="flex items-center space-x-2">
           <span class="h-2 w-2 rounded-full bg-violet-400 flex-shrink-0"></span>
-          <input type="text" value="${hl.replace(/"/g, '&quot;')}" data-scene="${index}" data-highlight="${hIdx}"
+          <input type="text" value="${safeHl}" data-scene="${index}" data-highlight="${hIdx}"
             class="scene-highlight-input w-full px-2.5 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 focus:border-violet-500 focus:outline-none transition-all" />
         </div>
-      `).join("");
+      `;
+      }).join("");
 
       card.innerHTML = `
         <div class="flex items-center justify-between border-b border-slate-850 pb-2">
-          <input type="text" value="${scene.title.replace(/"/g, '&quot;')}" data-scene="${index}" field="title"
+          <input type="text" value="${safeTitle}" data-scene="${index}" field="title"
             class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full" />
           <span class="text-[10px] bg-violet-950/60 text-violet-300 px-2 py-0.5 rounded border border-violet-800 font-semibold flex-shrink-0">Scene ${index + 1}</span>
         </div>
         <div>
           <label class="block text-[9px] uppercase font-semibold text-slate-500 mb-1">Scene Script Segment</label>
           <textarea data-scene="${index}" field="script" rows="2"
-            class="scene-script-input w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-300 focus:border-violet-500 focus:outline-none resize-none">${scene.script}</textarea>
+            class="scene-script-input w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-300 focus:border-violet-500 focus:outline-none resize-none">${safeScript}</textarea>
         </div>
         <div>
           <label class="block text-[9px] uppercase font-semibold text-slate-500 mb-1.5">3-4 On-Screen Key Highlights</label>

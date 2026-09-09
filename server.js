@@ -162,8 +162,18 @@ app.post("/api/login", (req, res) => {
   });
 });
 
-// Serve static frontend files from 'public' directory
-app.use(express.static("public"));
+// Serve static frontend files from 'public' directory with no-cache headers for scripts
+app.use(express.static("public", {
+  etag: false,
+  maxAge: 0,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith(".js") || filePath.endsWith(".html")) {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+}));
 
 // Ensure public/uploads directory exists
 if (!fs.existsSync("public/uploads")) {
