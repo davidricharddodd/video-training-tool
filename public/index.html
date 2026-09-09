@@ -79,33 +79,46 @@
           <!-- Voice Selection -->
           <div>
             <label for="voice" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-              Voice Model (Kokoro TTS)
+              Voice Model (Deepgram Aura &amp; Kokoro TTS)
             </label>
             <select id="voice" name="voice" 
               class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
-              <optgroup label="American English - Female">
-                <option value="af_bella" selected>Bella (American Female - Default)</option>
+              <optgroup label="Deepgram Aura TTS (Ultra Fast &amp; Natural)">
+                <option value="aura-asteria-en" selected>Asteria (Deepgram US Female - Conversational)</option>
+                <option value="aura-stella-en">Stella (Deepgram US Female - Professional)</option>
+                <option value="aura-athena-en">Athena (Deepgram UK Female - Clear &amp; Smooth)</option>
+                <option value="aura-luna-en">Luna (Deepgram US Female - Soft &amp; Casual)</option>
+                <option value="aura-hera-en">Hera (Deepgram US Female - Executive)</option>
+                <option value="aura-orion-en">Orion (Deepgram US Male - Professional)</option>
+                <option value="aura-arcas-en">Arcas (Deepgram US Male - Warm &amp; Clear)</option>
+                <option value="aura-perseus-en">Perseus (Deepgram US Male - Dynamic)</option>
+                <option value="aura-angus-en">Angus (Deepgram UK Male - Conversational)</option>
+                <option value="aura-zeus-en">Zeus (Deepgram US Male - Deep &amp; Formal)</option>
+                <option value="aura-helios-en">Helios (Deepgram UK Male - Friendly)</option>
+              </optgroup>
+              <optgroup label="Kokoro TTS - American Female">
+                <option value="af_bella">Bella (American Female - Default)</option>
                 <option value="af_heart">Heart (American Female - Expressive)</option>
                 <option value="af_nicole">Nicole (American Female)</option>
                 <option value="af_sky">Sky (American Female)</option>
               </optgroup>
-              <optgroup label="British English - Female">
+              <optgroup label="Kokoro TTS - British Female">
                 <option value="bf_alice">Alice (British Female - Refined)</option>
                 <option value="bf_emma">Emma (British Female - Warm)</option>
                 <option value="bf_isabella">Isabella (British Female - Clear)</option>
                 <option value="bf_lily">Lily (British Female - Gentle)</option>
               </optgroup>
-              <optgroup label="American English - Male">
+              <optgroup label="Kokoro TTS - American Male">
                 <option value="am_michael">Michael (American Male)</option>
                 <option value="am_adam">Adam (American Male)</option>
               </optgroup>
-              <optgroup label="British English - Male">
+              <optgroup label="Kokoro TTS - British Male">
                 <option value="bm_daniel">Daniel (British Male - Polished)</option>
                 <option value="bm_fable">Fable (British Male - Storytelling)</option>
                 <option value="bm_george">George (British Male - Classic)</option>
                 <option value="bm_lewis">Lewis (British Male - Modern)</option>
               </optgroup>
-              <optgroup label="Other Languages">
+              <optgroup label="Kokoro TTS - Other Languages">
                 <option value="jf_alpha">Alpha (Japanese Female)</option>
                 <option value="zf_xiaoxiao">Xiaoxiao (Mandarin Chinese Female)</option>
                 <option value="es_female">Spanish Female</option>
@@ -447,6 +460,17 @@
                 </label>
                 <input type="password" id="falToken" name="falToken" 
                   placeholder="Key id:secret" 
+                  class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-xs placeholder-slate-650 focus:outline-none focus:border-violet-500 transition-all duration-200" />
+              </div>
+
+              <!-- Deepgram API Key Overwrite -->
+              <div>
+                <label for="deepgramToken" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1 flex justify-between">
+                  <span>Deepgram API Key</span>
+                  <span class="text-[8px] text-slate-500 font-normal lowercase">(Optional: Overrides .env key)</span>
+                </label>
+                <input type="password" id="deepgramToken" name="deepgramToken" 
+                  placeholder="8418cdca..." 
                   class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-xs placeholder-slate-650 focus:outline-none focus:border-violet-500 transition-all duration-200" />
               </div>
             </div>

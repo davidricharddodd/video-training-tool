@@ -623,30 +623,68 @@ async function runFalTTS(text, voice, apiKey, jobId = null) {
   return audioUrl;
 }
 
+// Helper to run Deepgram TTS prediction using v1/speak
+async function runDeepgramTTS(text, voice, apiKey, outputPath) {
+  const model = voice || "aura-asteria-en";
+  const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}&encoding=linear16&container=wav`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Token ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ text })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Deepgram TTS API error (${response.status}): ${errorText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  fs.writeFileSync(outputPath, Buffer.from(arrayBuffer));
+  return outputPath;
+}
+
 // Route 1: Generate Audio Preview (supporting custom [pause X.X] markers and long-form scripts)
 app.post("/api/generate-audio", async (req, res) => {
   let activeProvider = "replicate";
   try {
     console.log(`[Audio Generation Request] Received body:`, req.body);
-    const { text, voice, customToken, customFalToken, lipsyncProvider } = req.body;
+    const { text, voice, customToken, customFalToken, customDeepgramToken, lipsyncProvider } = req.body;
 
-    activeProvider = lipsyncProvider || "replicate";
+    const isDeepgram = voice && voice.startsWith("aura-");
+    let deepgramApiKey = "";
     let apiToken = "";
-    if (activeProvider === "fal") {
-      apiToken = customFalToken || process.env.FAL_KEY;
-      if (!apiToken) {
+
+    if (isDeepgram) {
+      activeProvider = "deepgram";
+      deepgramApiKey = customDeepgramToken || process.env.DEEPGRAM_API_KEY;
+      if (!deepgramApiKey) {
         return res.status(400).json({
           success: false,
-          error: "Fal.ai API Key is missing. Please enter it in Developer Settings or set FAL_KEY in Railway.",
+          error: "Deepgram API Key is missing. Please enter it in Developer Settings or configure DEEPGRAM_API_KEY in Railway.",
         });
       }
     } else {
-      apiToken = customToken || process.env.REPLICATE_API_TOKEN;
-      if (!apiToken) {
-        return res.status(400).json({
-          success: false,
-          error: "Replicate API Token is missing. Please enter it in Developer Settings or configure REPLICATE_API_TOKEN in Railway.",
-        });
+      activeProvider = lipsyncProvider || "replicate";
+      if (activeProvider === "fal") {
+        apiToken = customFalToken || process.env.FAL_KEY;
+        if (!apiToken) {
+          return res.status(400).json({
+            success: false,
+            error: "Fal.ai API Key is missing. Please enter it in Developer Settings or set FAL_KEY in Railway.",
+          });
+        }
+      } else {
+        apiToken = customToken || process.env.REPLICATE_API_TOKEN;
+        if (!apiToken) {
+          return res.status(400).json({
+            success: false,
+            error: "Replicate API Token is missing. Please enter it in Developer Settings or configure REPLICATE_API_TOKEN in Railway.",
+          });
+        }
       }
     }
 
@@ -673,9 +711,11 @@ app.post("/api/generate-audio", async (req, res) => {
     // If there is only one short text chunk, execute a single quick TTS call
     if (parts.length === 1 && parts[0].type === "text") {
       console.log(`[Audio Generation] Short text detected. Running single TTS generation...`);
-      let audioUrl = "";
-      if (activeProvider === "fal") {
-        audioUrl = await runFalTTS(text, voice, apiToken, audioJobId);
+      if (isDeepgram) {
+        await runDeepgramTTS(text, voice, deepgramApiKey, finalOutputPath);
+      } else if (activeProvider === "fal") {
+        const audioUrl = await runFalTTS(text, voice, apiToken, audioJobId);
+        await downloadFile(audioUrl, finalOutputPath);
       } else {
         const audioOutput = await runWithRetry(
           replicate,
@@ -688,14 +728,13 @@ app.post("/api/generate-audio", async (req, res) => {
             },
           }
         );
-        audioUrl = audioOutput.toString();
+        await downloadFile(audioOutput.toString(), finalOutputPath);
       }
-      await downloadFile(audioUrl, finalOutputPath);
 
       // Save to database history
       db.addOrUpdate(audioJobId, {
         text: text,
-        voice: voice || "af_bella",
+        voice: voice || "aura-asteria-en",
         audioUrl: `/uploads/${outputFilename}`,
         videoUrl: null,
         lipsyncEngine: null,
@@ -721,9 +760,11 @@ app.post("/api/generate-audio", async (req, res) => {
       
       if (part.type === "text") {
         console.log(`[Audio Generation] Generating TTS chunk ${i + 1}/${parts.length}: "${part.content.substring(0, 40)}..."`);
-        let audioUrl = "";
-        if (activeProvider === "fal") {
-          audioUrl = await runFalTTS(part.content, voice, apiToken, audioJobId);
+        if (isDeepgram) {
+          await runDeepgramTTS(part.content, voice, deepgramApiKey, segmentFile);
+        } else if (activeProvider === "fal") {
+          const audioUrl = await runFalTTS(part.content, voice, apiToken, audioJobId);
+          await downloadFile(audioUrl, segmentFile);
         } else {
           const audioOutput = await runWithRetry(
             replicate,
@@ -736,9 +777,8 @@ app.post("/api/generate-audio", async (req, res) => {
               },
             }
           );
-          audioUrl = audioOutput.toString();
+          await downloadFile(audioOutput.toString(), segmentFile);
         }
-        await downloadFile(audioUrl, segmentFile);
         segmentFiles.push(segmentFile);
       } else if (part.type === "pause") {
         console.log(`[Audio Generation] Injecting ${part.duration}s silence chunk ${i + 1}/${parts.length}...`);
@@ -770,7 +810,7 @@ app.post("/api/generate-audio", async (req, res) => {
     // Save to database history
     db.addOrUpdate(audioJobId, {
       text: text,
-      voice: voice || "af_bella",
+      voice: voice || "aura-asteria-en",
       audioUrl: `/uploads/${outputFilename}`,
       videoUrl: null,
       lipsyncEngine: null,
@@ -793,6 +833,8 @@ app.post("/api/generate-audio", async (req, res) => {
       errorMsg = "Your Fal.ai API Key is invalid or expired. Please check your token in Developer Settings or set FAL_KEY in Railway.";
     } else if (activeProvider === "replicate" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Unauthenticated"))) {
       errorMsg = "Your Replicate API Token is invalid or expired. Please check your token in Developer Settings or configure REPLICATE_API_TOKEN in Railway.";
+    } else if (activeProvider === "deepgram" && (errorMsg.includes("401") || errorMsg.includes("Unauthorized") || errorMsg.includes("Invalid credentials") || errorMsg.includes("Key"))) {
+      errorMsg = "Your Deepgram API Key is invalid or expired. Please check your token in Developer Settings or configure DEEPGRAM_API_KEY in Railway.";
     }
     return res.status(500).json({
       success: false,

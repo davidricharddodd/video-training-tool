@@ -75,6 +75,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (savedFalToken) {
     document.getElementById("falToken").value = savedFalToken;
   }
+  const savedDeepgramToken = localStorage.getItem("deepgram_token");
+  if (savedDeepgramToken) {
+    document.getElementById("deepgramToken").value = savedDeepgramToken;
+  }
 
   // Handle upload filename display
   avatarFile.addEventListener("change", (e) => {
@@ -529,6 +533,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const voice = voiceSelect.value;
     const customToken = document.getElementById("customToken").value;
     const falToken = document.getElementById("falToken").value;
+    const deepgramToken = document.getElementById("deepgramToken").value;
 
     if (!text || text.trim() === "") {
       alert("Please enter a speech script first.");
@@ -547,6 +552,12 @@ document.addEventListener("DOMContentLoaded", () => {
       localStorage.removeItem("fal_token");
     }
 
+    if (deepgramToken) {
+      localStorage.setItem("deepgram_token", deepgramToken);
+    } else {
+      localStorage.removeItem("deepgram_token");
+    }
+
     // UI Loading state
     generateAudioBtn.disabled = true;
     audioSpinner.classList.remove("hidden");
@@ -561,6 +572,7 @@ document.addEventListener("DOMContentLoaded", () => {
           voice, 
           customToken, 
           customFalToken: falToken, 
+          customDeepgramToken: deepgramToken,
           lipsyncProvider: lipsyncProvider.value 
         })
       });
