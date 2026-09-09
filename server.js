@@ -605,65 +605,111 @@ function splitTextIntoChunks(text, maxChars = 250) {
 
 // Helper: Format bullet point strings cleanly
 function formatHighlightString(str) {
-  let cleaned = str.replace(/^[^a-zA-Z0-9]+/, "").trim();
-  if (cleaned.length > 55) {
-    cleaned = cleaned.substring(0, 52) + "...";
+  let cleaned = str.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
+  cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
+  cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
+  if (cleaned.length > 58) {
+    cleaned = cleaned.substring(0, 55).trim() + "...";
   }
+  if (!cleaned) return "";
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
-// Helper: Extract 3-4 concise bullet points from a scene's text
+// Helper: Extract 3-4 concise bullet points from a scene's text without stripping key words
 function extractHighlightsFromText(text) {
-  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
-  const highlights = [];
+  const cleanRaw = text.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
+  if (!cleanRaw) return [];
 
-  for (const sentence of sentences) {
-    const clean = sentence.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
-    if (!clean) continue;
+  const rawUnits = cleanRaw.split(/(?<=[.!?;\n—–])|(?<=[,])\s+/);
+  const candidatePhrases = [];
 
-    const clauses = clean.split(/[,;—–]|\b(and|with|that|which|before|after|including)\b/i)
-      .map(c => c ? c.trim() : "")
-      .filter(c => c.length >= 10 && !/^(and|with|that|which|before|after|including)$/i.test(c));
+  for (let unit of rawUnits) {
+    unit = unit.trim();
+    if (!unit) continue;
 
-    if (clauses.length > 1) {
-      for (const clause of clauses) {
-        if (highlights.length < 4 && clause.length >= 12) {
-          highlights.push(formatHighlightString(clause));
-        }
+    if (unit.length > 65) {
+      const subParts = unit.split(/(?=\b(?:and|with|that|which|before|after|including|for)\b)/i);
+      for (let sub of subParts) {
+        const cleaned = formatHighlightString(sub);
+        if (cleaned.length >= 10) candidatePhrases.push(cleaned);
       }
     } else {
-      if (highlights.length < 4 && clean.length >= 12) {
-        highlights.push(formatHighlightString(clean));
+      const cleaned = formatHighlightString(unit);
+      if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+    }
+  }
+
+  const unique = [];
+  for (const p of candidatePhrases) {
+    if (!unique.includes(p) && unique.length < 4) {
+      unique.push(p);
+    }
+  }
+
+  if (unique.length < 3) {
+    const sentences = cleanRaw.match(/[^.!?]+[.!?]*/g) || [cleanRaw];
+    for (const sent of sentences) {
+      const cleaned = formatHighlightString(sent);
+      if (cleaned && !unique.includes(cleaned) && unique.length < 4) {
+        unique.push(cleaned);
       }
     }
   }
 
-  while (highlights.length < 3) {
-    const idx = highlights.length + 1;
-    const words = text.split(/\s+/).filter(Boolean);
-    const slice = words.slice((idx - 1) * 5, idx * 5).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
-    highlights.push(formatHighlightString(slice || `Key Point ${idx} for this section`));
+  while (unique.length < 3) {
+    const idx = unique.length + 1;
+    unique.push(`Key Highlight ${idx} for this section`);
   }
 
-  return highlights.slice(0, 4);
+  return unique.slice(0, 4);
 }
 
 // Helper: Intelligent Scene Breakdown into targetCount scenes (default 6)
 function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   if (!rawText || !rawText.trim()) return [];
 
-  const cleanText = rawText.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
-  const sentences = cleanText.match(/[^.!?]+[.!?]*/g) || [cleanText];
-  const cleanedSentences = sentences.map(s => s.trim()).filter(Boolean);
+  const cleanText = rawText.replace(/\r?\n/g, "\n").trim();
+  let units = [];
+  const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
+  for (const para of paragraphs) {
+    const sents = para.match(/[^.!?]+[.!?]*/g) || [para];
+    for (const s of sents) {
+      if (s.trim()) units.push(s.trim());
+    }
+  }
+
+  // If units < targetCount, split long units at clause boundaries to reach targetCount
+  while (units.length < targetCount) {
+    let longestIdx = -1;
+    let maxLen = 0;
+    for (let i = 0; i < units.length; i++) {
+      if (units[i].length > maxLen) {
+        maxLen = units[i].length;
+        longestIdx = i;
+      }
+    }
+    if (longestIdx === -1 || maxLen < 35) break;
+
+    const targetUnit = units[longestIdx];
+    const splitMatch = targetUnit.split(/(?<=[,;—–])\s+/);
+    if (splitMatch.length > 1) {
+      const mid = Math.floor(splitMatch.length / 2);
+      const part1 = splitMatch.slice(0, mid).join(" ");
+      const part2 = splitMatch.slice(mid).join(" ");
+      units.splice(longestIdx, 1, part1, part2);
+    } else {
+      break;
+    }
+  }
 
   let sceneChunks = [];
-  if (cleanedSentences.length <= targetCount) {
-    sceneChunks = cleanedSentences.map(s => [s]);
+  if (units.length <= targetCount) {
+    sceneChunks = units.map(u => [u]);
   } else {
-    const sentencesPerScene = Math.ceil(cleanedSentences.length / targetCount);
+    const unitsPerScene = Math.ceil(units.length / targetCount);
     for (let i = 0; i < targetCount; i++) {
-      const start = i * sentencesPerScene;
-      const chunk = cleanedSentences.slice(start, start + sentencesPerScene);
+      const start = i * unitsPerScene;
+      const chunk = units.slice(start, start + unitsPerScene);
       if (chunk.length > 0) {
         sceneChunks.push(chunk);
       }
@@ -673,8 +719,9 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   return sceneChunks.map((chunkSentences, index) => {
     const sceneText = chunkSentences.join(" ");
     const highlights = extractHighlightsFromText(sceneText);
-    const words = sceneText.split(/\s+/).slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
-    const title = `Scene ${index + 1}: ${words.charAt(0).toUpperCase() + words.slice(1)}...`;
+    const words = sceneText.split(/\s+/).filter(Boolean);
+    const titleWords = words.slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
+    const title = `Scene ${index + 1}: ${titleWords.charAt(0).toUpperCase() + titleWords.slice(1)}...`;
 
     return {
       sceneIndex: index + 1,
@@ -1710,7 +1757,7 @@ app.post("/api/generate-video", upload.fields([
         }
 
         // 5. Apply Video Branding, Background Layouts & Scene Highlight Overlays
-        if ((logoPath || bgPath || (scenes && scenes.length > 0)) && videoUrl) {
+        if (videoUrl) {
           addJobLog(jobId, "Applying Video Branding & Scene Highlight Overlays...");
           const brandedFilename = `branded_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp4`;
           const brandedOutputPath = path.join("public", "uploads", brandedFilename);

@@ -115,16 +115,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const savedDeepgramToken = localStorage.getItem("deepgram_token");
   if (savedDeepgramToken) document.getElementById("deepgramToken").value = savedDeepgramToken;
 
-  // AI Scene Breakdown Trigger
-  analyzeScriptBtn.addEventListener("click", async () => {
+  // AI Scene Breakdown Core Logic
+  async function triggerSceneBreakdown(silent = false) {
     const rawText = scriptText.value;
     if (!rawText || !rawText.trim()) {
-      alert("Please enter a speech script first.");
+      if (!silent) alert("Please enter a speech script first.");
       return;
     }
 
-    analyzeScriptBtn.disabled = true;
-    analyzeScriptBtn.innerHTML = `<span>⏳ Analyzing script into ${targetSceneCount.value} scenes...</span>`;
+    if (!silent && analyzeScriptBtn) {
+      analyzeScriptBtn.disabled = true;
+      analyzeScriptBtn.innerHTML = `<span>⏳ Analyzing script into ${targetSceneCount.value} scenes...</span>`;
+    }
 
     try {
       const response = await fetch("/api/breakdown-scenes", {
@@ -145,14 +147,37 @@ document.addEventListener("DOMContentLoaded", () => {
       renderSceneCards(currentScenes);
       logMessage(`Successfully analyzed script into ${currentScenes.length} scenes with 3-4 key highlight overlays!`, "success");
     } catch (err) {
-      console.error(err);
-      alert(err.message);
+      console.error("Scene breakdown error:", err);
+      if (!silent) alert(err.message);
       logMessage(`Error breaking down scenes: ${err.message}`, "error");
     } finally {
-      analyzeScriptBtn.disabled = false;
-      analyzeScriptBtn.innerHTML = `<span>⚡ Analyze &amp; Generate Scene Breakdown</span>`;
+      if (!silent && analyzeScriptBtn) {
+        analyzeScriptBtn.disabled = false;
+        analyzeScriptBtn.innerHTML = `<span>⚡ Analyze &amp; Generate Scene Breakdown</span>`;
+      }
     }
-  });
+  }
+
+  // Manual Trigger
+  if (analyzeScriptBtn) {
+    analyzeScriptBtn.addEventListener("click", () => triggerSceneBreakdown(false));
+  }
+
+  // Automatic Debounced Trigger on text input or scene count change
+  let sceneDebounceTimer = null;
+  const autoBreakdownDebounce = () => {
+    clearTimeout(sceneDebounceTimer);
+    sceneDebounceTimer = setTimeout(() => {
+      if (scriptText.value && scriptText.value.trim().length >= 10) {
+        triggerSceneBreakdown(true);
+      }
+    }, 500);
+  };
+
+  scriptText.addEventListener("input", autoBreakdownDebounce);
+  if (targetSceneCount) {
+    targetSceneCount.addEventListener("change", () => triggerSceneBreakdown(true));
+  }
 
   function renderSceneCards(scenes) {
     sceneCardsGrid.innerHTML = "";
@@ -538,6 +563,12 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("faceEnhancer", faceEnhancer);
     formData.append("logoPosition", logoPosition.value);
     formData.append("bgPresenterAlign", "right");
+
+    if (!currentScenes || currentScenes.length === 0) {
+      if (scriptText.value && scriptText.value.trim()) {
+        await triggerSceneBreakdown(true);
+      }
+    }
 
     if (currentScenes && currentScenes.length > 0) {
       formData.append("scenes", JSON.stringify(currentScenes));
