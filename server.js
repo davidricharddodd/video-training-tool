@@ -647,7 +647,7 @@ function extractHighlightsFromText(text) {
   const cleanRaw = text.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
   if (!cleanRaw) return [];
 
-  const rawUnits = cleanRaw.split(/(?<=[.!?;\n—–])|(?<=[,])\s+/);
+  const rawUnits = cleanRaw.split(/[\n;—–\.\!\?]+|,\s+/);
   const candidatePhrases = [];
 
   for (let unit of rawUnits) {
@@ -655,7 +655,7 @@ function extractHighlightsFromText(text) {
     if (!unit) continue;
 
     if (unit.length > 65) {
-      const subParts = unit.split(/(?=\b(?:and|with|that|which|before|after|including|for)\b)/i);
+      const subParts = unit.split(/\b(?:and|with|that|which|before|after|including|for)\b/i);
       for (let sub of subParts) {
         const cleaned = formatHighlightString(sub);
         if (cleaned.length >= 10) candidatePhrases.push(cleaned);
@@ -674,7 +674,7 @@ function extractHighlightsFromText(text) {
   }
 
   if (unique.length < 3) {
-    const sentences = cleanRaw.match(/[^.!?]+[.!?]*/g) || [cleanRaw];
+    const sentences = cleanRaw.split(/[\.\!\?]+/).filter(Boolean);
     for (const sent of sentences) {
       const cleaned = formatHighlightString(sent);
       if (cleaned && !unique.includes(cleaned) && unique.length < 4) {
@@ -699,7 +699,7 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   let units = [];
   const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
   for (const para of paragraphs) {
-    const sents = para.match(/[^.!?]+[.!?]*/g) || [para];
+    const sents = para.split(/[\.\!\?]+/).map(s => s.trim()).filter(Boolean);
     for (const s of sents) {
       if (s.trim()) units.push(s.trim());
     }
@@ -718,7 +718,7 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
     if (longestIdx === -1 || maxLen < 35) break;
 
     const targetUnit = units[longestIdx];
-    const splitMatch = targetUnit.split(/(?<=[,;—–])\s+/);
+    const splitMatch = targetUnit.split(/[,;—–]\s+/);
     if (splitMatch.length > 1) {
       const mid = Math.floor(splitMatch.length / 2);
       const part1 = splitMatch.slice(0, mid).join(" ");
