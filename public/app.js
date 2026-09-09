@@ -103,6 +103,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".nav-next-btn, .nav-prev-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-target");
+      if (target === "2" && (!currentScenes || currentScenes.length === 0)) {
+        if (scriptText && scriptText.value && scriptText.value.trim()) {
+          triggerSceneBreakdown(true);
+        }
+      }
       if (target) switchTab(target);
     });
   });
@@ -267,21 +272,17 @@ document.addEventListener("DOMContentLoaded", () => {
     analyzeScriptBtn.addEventListener("click", () => triggerSceneBreakdown(false));
   }
 
-  // Automatic Debounced Trigger on text input or scene count change
-  let sceneDebounceTimer = null;
-  const autoBreakdownDebounce = () => {
-    clearTimeout(sceneDebounceTimer);
-    sceneDebounceTimer = setTimeout(() => {
-      if (scriptText && scriptText.value && scriptText.value.trim().length >= 10) {
-        triggerSceneBreakdown(true);
-      }
-    }, 400);
-  };
-
+  // Auto-trigger on paste or scene count dropdown change
   if (scriptText) {
-    scriptText.addEventListener("input", autoBreakdownDebounce);
-    scriptText.addEventListener("paste", () => setTimeout(autoBreakdownDebounce, 100));
+    scriptText.addEventListener("paste", () => {
+      setTimeout(() => {
+        if (scriptText.value && scriptText.value.trim().length >= 10) {
+          triggerSceneBreakdown(true);
+        }
+      }, 100);
+    });
   }
+
   if (targetSceneCount) {
     targetSceneCount.addEventListener("change", () => triggerSceneBreakdown(true));
   }
