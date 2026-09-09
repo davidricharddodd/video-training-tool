@@ -252,7 +252,39 @@ document.addEventListener("DOMContentLoaded", () => {
       customAvatarsOptGroup.appendChild(opt);
     });
 
-    updateDeleteBtnVisibility();
+  const presetVideoUrls = {
+    preset_female_1: "/presets/female_1.mp4",
+    preset_female_2: "/presets/female_2.mp4",
+    preset_female_3: "/presets/female_3.mp4",
+    preset_female_4: "/presets/female_4.mp4",
+    preset_female_5: "/presets/female_5.mp4",
+    preset_female_6: "/presets/female_6.mp4",
+    preset_male_1: "/presets/male_1.mp4",
+    preset_male_2: "/presets/male_2.mp4",
+    preset_male_3: "/presets/male_3.mp4",
+    preset_male_4: "/presets/male_4.mp4",
+    preset_male_5: "/presets/male_5.mp4"
+  };
+
+  const presenterPreviewPlayer = document.getElementById("presenterPreviewPlayer");
+  const presenterPreviewName = document.getElementById("presenterPreviewName");
+
+  function updatePresenterPreview() {
+    if (!presenterPreviewPlayer) return;
+    const val = avatarPreset.value;
+    const selectedText = avatarPreset.options[avatarPreset.selectedIndex] ? avatarPreset.options[avatarPreset.selectedIndex].text : val;
+    
+    if (presetVideoUrls[val]) {
+      presenterPreviewPlayer.src = presetVideoUrls[val];
+      presenterPreviewName.textContent = selectedText;
+    } else if (val && val.startsWith("custom_")) {
+      const match = customAvatars.find(a => a.id === val);
+      if (match) {
+        presenterPreviewPlayer.src = match.videoUrl;
+        presenterPreviewName.textContent = match.name;
+      }
+    }
+    presenterPreviewPlayer.load();
   }
 
   function updateDeleteBtnVisibility() {
@@ -260,7 +292,10 @@ document.addEventListener("DOMContentLoaded", () => {
     deleteCustomAvatarBtn.classList.toggle("hidden", !isCustomSelected);
   }
 
-  avatarPreset.addEventListener("change", updateDeleteBtnVisibility);
+  avatarPreset.addEventListener("change", () => {
+    updateDeleteBtnVisibility();
+    updatePresenterPreview();
+  });
 
   deleteCustomAvatarBtn.addEventListener("click", async () => {
     const selectedId = avatarPreset.value;

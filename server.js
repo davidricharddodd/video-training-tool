@@ -329,23 +329,58 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
     let currentStream = "0:v";
     let audioMapStream = "0:a";
 
-    // 1. If background replacement requested
+    // 1. Prepare Background Canvas (use uploaded bgPath or default high-end corporate dark blue gradient)
+    let bgInputIdx;
     if (bgPath) {
       inputs.push(`-i "${bgPath}"`);
-      const bgIdx = nextInputIdx++;
-      audioMapStream = "0:a";
-
-      let xPos = "W-w-100";
-      if (bgPresenterAlign === "left") xPos = "100";
-      else if (bgPresenterAlign === "center") xPos = "(W-w)/2";
-
-      filterParts.push(`[${bgIdx}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080[bg]`);
-      filterParts.push(`[0:v]scale=-2:1080[fg]`);
-      filterParts.push(`[bg][fg]overlay=x=${xPos}:y=(H-h)/2[v_bg]`);
-      currentStream = "v_bg";
+      bgInputIdx = nextInputIdx++;
+      filterParts.push(`[${bgInputIdx}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080[bg_canvas]`);
+    } else {
+      const bgSvgPath = path.join(tempOutputDir, `bg_canvas_${Date.now()}.svg`);
+      const bgSvgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">
+        <defs>
+          <linearGradient id="corpBg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0b1329"/>
+            <stop offset="50%" stop-color="#111c3d"/>
+            <stop offset="100%" stop-color="#19254d"/>
+          </linearGradient>
+        </defs>
+        <rect width="1920" height="1080" fill="url(#corpBg)"/>
+      </svg>`;
+      fs.writeFileSync(bgSvgPath, bgSvgContent);
+      tempFiles.push(bgSvgPath);
+      inputs.push(`-i "${bgSvgPath}"`);
+      bgInputIdx = nextInputIdx++;
+      filterParts.push(`[${bgInputIdx}:v]scale=1920:1080[bg_canvas]`);
     }
 
-    // 2. Add Scene Highlight SVG Overlays if scenes are provided
+    // 2. Generate Rounded Corner Alpha Mask for Presenter Video Box (Width: 700px, Height: 940px, Radius: 32px)
+    const presenterWidth = 700;
+    const presenterHeight = 940;
+    const maskSvgPath = path.join(tempOutputDir, `presenter_mask_${Date.now()}.svg`);
+    const maskSvgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${presenterWidth}" height="${presenterHeight}">
+      <rect x="0" y="0" width="${presenterWidth}" height="${presenterHeight}" rx="32" ry="32" fill="white"/>
+    </svg>`;
+    fs.writeFileSync(maskSvgPath, maskSvgContent);
+    tempFiles.push(maskSvgPath);
+
+    inputs.push(`-i "${maskSvgPath}"`);
+    const maskInputIdx = nextInputIdx++;
+
+    // Scale & Crop Presenter Video to 700x940, apply rounded mask via alphamerge
+    filterParts.push(`[0:v]scale=${presenterWidth}:${presenterHeight}:force_original_aspect_ratio=increase,crop=${presenterWidth}:${presenterHeight}[fg_raw]`);
+    filterParts.push(`[${maskInputIdx}:v]scale=${presenterWidth}:${presenterHeight}[mask_raw]`);
+    filterParts.push(`[fg_raw][mask_raw]alphamerge[fg_rounded]`);
+
+    // Determine presenter alignment on canvas (default right side at x=1160, y=70)
+    let xPos = "1160";
+    if (bgPresenterAlign === "left") xPos = "60";
+    else if (bgPresenterAlign === "center") xPos = "(W-w)/2";
+
+    filterParts.push(`[bg_canvas][fg_rounded]overlay=x=${xPos}:y=70[v_comp]`);
+    currentStream = "v_comp";
+
+    // 3. Add Scene Highlight Overlays if scenes are provided
     if (scenes && scenes.length > 0) {
       const sceneDuration = (audioDuration || 60) / scenes.length;
 
@@ -367,15 +402,15 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
       }
     }
 
-    // 3. Add Logo Watermark if provided
+    // 4. Add Logo Watermark if provided
     if (logoPath) {
       inputs.push(`-i "${logoPath}"`);
       const logoIdx = nextInputIdx++;
-      filterParts.push(`[${logoIdx}:v]scale=180:-1[logo]`);
-      let logoOverlay = "W-w-20:20";
-      if (logoPosition === "top_left") logoOverlay = "20:20";
-      else if (logoPosition === "bottom_right") logoOverlay = "W-w-20:H-h-20";
-      else if (logoPosition === "bottom_left") logoOverlay = "20:H-h-20";
+      filterParts.push(`[${logoIdx}:v]scale=220:-1[logo]`);
+      let logoOverlay = "80:60"; // Default top left to match REC logo placement in screenshot
+      if (logoPosition === "top_right") logoOverlay = "W-w-60:60";
+      else if (logoPosition === "bottom_right") logoOverlay = "W-w-60:H-h-60";
+      else if (logoPosition === "bottom_left") logoOverlay = "80:H-h-60";
 
       filterParts.push(`[${currentStream}][logo]overlay=${logoOverlay}[v_final]`);
       currentStream = "v_final";
@@ -384,7 +419,7 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
     const filterComplexStr = filterParts.join("; ");
     const command = `ffmpeg -y ${inputs.join(" ")} -filter_complex "${filterComplexStr}" -map "[${currentStream}]" -map ${audioMapStream} -c:v libx264 -c:a aac -pix_fmt yuv420p "${outputVideoPath}"`;
 
-    console.log(`[Video Composition] Executing scene overlay & branding filter...`);
+    console.log(`[Video Composition] Executing rounded presenter box & scene overlay filter...`);
     await execPromise(command);
 
   } finally {
@@ -652,41 +687,38 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
 
 // Helper to generate a clean, modern SVG slide overlay card with 3-4 bullet points
 function generateSceneOverlaySvg(highlights, title, sceneIndex) {
-  const safeTitle = (title || `Scene ${sceneIndex}`).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rawTitle = title || `Scene ${sceneIndex}`;
+  const cleanTitle = rawTitle.replace(/^Scene \d+:\s*/i, "").trim();
+  const safeTitle = cleanTitle.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   
   const bulletLines = (highlights || []).slice(0, 4).map((h, i) => {
-    const yText = 300 + (i * 75);
-    const yDot = yText - 5;
+    const yText = 430 + (i * 90);
+    const yDot = yText - 8;
     const safeH = String(h).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return `
-    <circle cx="1255" cy="${yDot}" r="7" fill="#a78bfa" />
-    <text x="1275" y="${yText}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="500" fill="#f1f5f9">${safeH}</text>
+    <circle cx="92" cy="${yDot}" r="8" fill="#8b5cf6" />
+    <text x="118" y="${yText}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" font-weight="600" fill="#f8fafc">${safeH}</text>
     `;
   }).join("\n");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#090d16" stop-opacity="0.88"/>
-      <stop offset="100%" stop-color="#1e1b4b" stop-opacity="0.94"/>
-    </linearGradient>
-    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#7c3aed"/>
+    <linearGradient id="titleAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
       <stop offset="100%" stop-color="#d946ef"/>
     </linearGradient>
   </defs>
 
-  <!-- Right-Side Highlight Card Overlay -->
-  <rect x="1200" y="140" width="660" height="800" rx="24" fill="url(#bgGrad)" stroke="#334155" stroke-width="2"/>
-  <rect x="1200" y="140" width="660" height="6" rx="3" fill="url(#accentGrad)"/>
+  <!-- Left-Side Scene Card Content -->
+  <!-- Scene Badge -->
+  <rect x="80" y="240" width="120" height="32" rx="8" fill="#7c3aed" fill-opacity="0.35" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="140" y="261" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="bold" fill="#ddd6fe" text-anchor="middle" letter-spacing="1">SCENE ${sceneIndex}</text>
 
-  <!-- Badge & Header Title -->
-  <rect x="1240" y="180" width="150" height="28" rx="6" fill="#7c3aed" fill-opacity="0.3" stroke="#8b5cf6" stroke-width="1"/>
-  <text x="1315" y="199" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="bold" fill="#ddd6fe" text-anchor="middle" letter-spacing="1">KEY SCENE HIGHLIGHTS</text>
+  <!-- Scene Title Headline -->
+  <text x="80" y="335" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40" font-weight="bold" fill="#ffffff">${safeTitle}</text>
+  <rect x="80" y="360" width="220" height="6" rx="3" fill="url(#titleAccent)"/>
 
-  <text x="1240" y="245" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="bold" fill="#ffffff">${safeTitle}</text>
-
-  <!-- Dynamic Bullet Points -->
+  <!-- On-Screen Key Bullet Highlights -->
   ${bulletLines}
 </svg>`;
 }
