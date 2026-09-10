@@ -257,8 +257,8 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
     inputs.push(`-i "${maskSvgPath}"`);
     const maskInputIdx = nextInputIdx++;
 
-    // Scale & Crop Presenter Video to 700x940, apply rounded mask via alphamerge
-    filterParts.push(`[0:v]scale=${presenterWidth}:${presenterHeight}:force_original_aspect_ratio=increase,crop=${presenterWidth}:${presenterHeight}[fg_raw]`);
+    // Scale & Crop Presenter Video to 700x940 (offset crop vertically for portrait videos so head & face are preserved)
+    filterParts.push(`[0:v]scale=${presenterWidth}:${presenterHeight}:force_original_aspect_ratio=increase,crop=${presenterWidth}:${presenterHeight}:(in_w-out_w)/2:'if(gt(in_h,out_h),(in_h-out_h)*0.10,(in_h-out_h)/2)'[fg_raw]`);
     filterParts.push(`[${maskInputIdx}:v]scale=${presenterWidth}:${presenterHeight}[mask_raw]`);
     filterParts.push(`[fg_raw][mask_raw]alphamerge[fg_rounded]`);
 

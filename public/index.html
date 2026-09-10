@@ -72,6 +72,33 @@
 
       <!-- TAB 1: SCRIPT & SCENES -->
       <div id="tabContent1" class="tab-content space-y-6">
+        <!-- Quick Start: Reuse Audio on Tab 1 -->
+        <div class="p-4 bg-violet-950/30 border border-violet-800/60 rounded-2xl space-y-2.5 backdrop-blur-xl">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-violet-300 flex items-center space-x-2">
+              <span>⚡</span>
+              <span>Quick Start: Reuse Previous Audio Track</span>
+            </span>
+            <span class="text-[10px] bg-violet-900/60 text-violet-300 border border-violet-700/60 px-2 py-0.5 rounded-full font-medium">Skip TTS Generation</span>
+          </div>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Already generated an approved audio track? Pick it below to instantly load it, auto-populate the scene cards, or jump straight to choosing a presenter:
+          </p>
+          <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+            <select id="tab1PreviousAudioSelect" class="flex-1 px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-xs focus:outline-none focus:border-violet-500 transition-all">
+              <option value="">-- Choose an audio file from history --</option>
+            </select>
+            <div class="flex items-center space-x-2">
+              <button type="button" id="tab1LoadAudioBtn" class="px-3.5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold text-xs rounded-xl shadow-md transition-all cursor-pointer whitespace-nowrap">
+                Load &amp; Edit Scenes
+              </button>
+              <button type="button" id="tab1DirectToPresenterBtn" class="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-xl border border-slate-700 transition-all cursor-pointer whitespace-nowrap">
+                Jump to Presenter →
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-xl space-y-5">
           <div class="flex items-center justify-between border-b border-slate-800 pb-3">
             <h2 class="text-base font-semibold text-slate-200 flex items-center space-x-2">
@@ -391,17 +418,6 @@
                 <!-- Dynamically populated from /api/custom-avatars -->
               </optgroup>
             </select>
-
-            <!-- Live Presenter Video Preview Window -->
-            <div id="presenterPreviewContainer" class="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex flex-col items-center space-y-2">
-              <div class="flex items-center justify-between w-full px-1">
-                <span class="text-[10px] uppercase font-semibold text-slate-400">Presenter Live Preview</span>
-                <span id="presenterPreviewName" class="text-xs text-violet-400 font-semibold">Alex - Creative Presenter</span>
-              </div>
-              <div class="relative w-full max-w-xs aspect-video bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
-                <video id="presenterPreviewPlayer" src="/presets/male_5.mp4" autoplay loop muted playsinline class="w-full h-full object-cover rounded-xl"></video>
-              </div>
-            </div>
           </div>
 
           <!-- Kling AI Generator Input -->
@@ -471,6 +487,17 @@
             <div class="relative border-2 border-dashed border-slate-800 hover:border-violet-500 rounded-xl p-4 text-center transition-all">
               <span id="uploadFilename" class="text-xs text-slate-400 font-medium">Click to upload MP4 presenter video</span>
               <input type="file" id="avatarFile" name="avatarFile" accept="video/mp4" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+            </div>
+          </div>
+
+          <!-- Live Presenter Video Preview Window (Visible for Presets, Uploads, URLs, & Generated Avatars) -->
+          <div id="presenterPreviewContainer" class="p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl flex flex-col items-center space-y-2.5 shadow-inner">
+            <div class="flex items-center justify-between w-full px-1">
+              <span class="text-[10px] uppercase font-semibold text-slate-400">Presenter Live Preview</span>
+              <span id="presenterPreviewName" class="text-xs text-violet-400 font-semibold">Alex - Creative Presenter</span>
+            </div>
+            <div class="relative w-full max-w-xs aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
+              <video id="presenterPreviewPlayer" src="/presets/male_5.mp4" autoplay loop muted playsinline class="w-full h-full object-contain bg-slate-950 rounded-xl"></video>
             </div>
           </div>
 
@@ -656,6 +683,6 @@
   </main>
 
   <!-- Script -->
-  <script src="/app.js?v=202609101200"></script>
+  <script src="/app.js?v=202609101300"></script>
 </body>
 </html>

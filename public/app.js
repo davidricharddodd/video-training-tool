@@ -67,6 +67,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const downloadVttBtn = document.getElementById("downloadVttBtn");
   const previousAudioSelect = document.getElementById("previousAudioSelect");
   const usePreviousAudioBtn = document.getElementById("usePreviousAudioBtn");
+  const tab1PreviousAudioSelect = document.getElementById("tab1PreviousAudioSelect");
+  const tab1LoadAudioBtn = document.getElementById("tab1LoadAudioBtn");
+  const tab1DirectToPresenterBtn = document.getElementById("tab1DirectToPresenterBtn");
+  const avatarUrlInput = document.getElementById("avatarUrl");
   
   const consoleLogs = document.getElementById("consoleLogs");
   const clearLogsBtn = document.getElementById("clearLogsBtn");
@@ -170,21 +174,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
     scenes.forEach((scene, index) => {
       const card = document.createElement("div");
-      card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner";
+      card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner relative group";
 
       const highlightsHtml = (scene.highlights || []).map((hl, hIdx) => `
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-2 group/item">
           <span class="h-2 w-2 rounded-full bg-violet-400 flex-shrink-0"></span>
           <input type="text" value="${hl.replace(/"/g, '&quot;')}" data-scene="${index}" data-highlight="${hIdx}"
             class="scene-highlight-input w-full px-2.5 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 focus:border-violet-500 focus:outline-none transition-all" />
+          <button type="button" class="delete-highlight-btn text-slate-500 hover:text-rose-400 p-1 text-xs rounded transition-all cursor-pointer"
+            data-scene="${index}" data-highlight="${hIdx}" title="Remove bullet point">
+            ✕
+          </button>
         </div>
       `).join("");
 
       card.innerHTML = `
-        <div class="flex items-center justify-between border-b border-slate-850 pb-2">
-          <input type="text" value="${scene.title.replace(/"/g, '&quot;')}" data-scene="${index}" field="title"
-            class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full" />
-          <span class="text-[10px] bg-violet-950/60 text-violet-300 px-2 py-0.5 rounded border border-violet-800 font-semibold flex-shrink-0">Scene ${index + 1}</span>
+        <div class="flex items-center justify-between border-b border-slate-850 pb-2 gap-2">
+          <div class="flex items-center space-x-2 flex-1 min-w-0">
+            <span class="text-[10px] bg-violet-950/60 text-violet-300 px-2 py-0.5 rounded border border-violet-800 font-semibold flex-shrink-0">Scene ${index + 1}</span>
+            <input type="text" value="${scene.title.replace(/"/g, '&quot;')}" data-scene="${index}" field="title"
+              class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full" />
+          </div>
+          <button type="button" class="delete-scene-btn text-slate-500 hover:text-rose-400 p-1 text-xs rounded transition-all cursor-pointer flex-shrink-0"
+            data-scene="${index}" title="Delete Scene ${index + 1}">
+            🗑️
+          </button>
         </div>
         <div>
           <label class="block text-[9px] uppercase font-semibold text-slate-500 mb-1">Scene Script Segment</label>
@@ -192,15 +206,34 @@ document.addEventListener("DOMContentLoaded", () => {
             class="scene-script-input w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-300 focus:border-violet-500 focus:outline-none resize-none">${scene.script}</textarea>
         </div>
         <div>
-          <label class="block text-[9px] uppercase font-semibold text-slate-500 mb-1.5">3-4 On-Screen Key Highlights</label>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-[9px] uppercase font-semibold text-slate-500">On-Screen Key Highlights</label>
+            <button type="button" class="add-highlight-btn text-[10px] text-violet-400 hover:text-violet-300 font-semibold flex items-center space-x-0.5 transition-all cursor-pointer"
+              data-scene="${index}">
+              <span>+ Add Bullet</span>
+            </button>
+          </div>
           <div class="space-y-1.5">
-            ${highlightsHtml}
+            ${highlightsHtml || '<p class="text-[11px] text-slate-600 italic">No bullet points. Click + Add Bullet to add one.</p>'}
           </div>
         </div>
       `;
       sceneCardsGrid.appendChild(card);
     });
 
+    // Add "Add New Scene" button card at the end
+    const addCard = document.createElement("button");
+    addCard.type = "button";
+    addCard.id = "addNewSceneBtn";
+    addCard.className = "border-2 border-dashed border-slate-800 hover:border-violet-500/60 rounded-xl p-6 flex flex-col items-center justify-center space-y-1 text-xs font-semibold text-slate-400 hover:text-violet-300 transition-all cursor-pointer bg-slate-950/40 min-h-[160px]";
+    addCard.innerHTML = `
+      <span class="text-xl">➕</span>
+      <span>Add New Scene</span>
+      <span class="text-[10px] font-normal text-slate-500">Insert an extra scene slide into this video</span>
+    `;
+    sceneCardsGrid.appendChild(addCard);
+
+    // Event Listeners for scene cards
     document.querySelectorAll(".scene-title-input").forEach(input => {
       input.addEventListener("input", (e) => {
         const idx = parseInt(e.target.getAttribute("data-scene"), 10);
@@ -212,7 +245,6 @@ document.addEventListener("DOMContentLoaded", () => {
       input.addEventListener("input", (e) => {
         const idx = parseInt(e.target.getAttribute("data-scene"), 10);
         currentScenes[idx].script = e.target.value;
-        // Keep main speech script synchronized with scene cards
         scriptText.value = currentScenes.map(s => s.script).join("\n\n");
       });
     });
@@ -223,6 +255,62 @@ document.addEventListener("DOMContentLoaded", () => {
         const hIdx = parseInt(e.target.getAttribute("data-highlight"), 10);
         currentScenes[sIdx].highlights[hIdx] = e.target.value;
       });
+    });
+
+    // Delete Highlight Button Handler
+    document.querySelectorAll(".delete-highlight-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const sIdx = parseInt(btn.getAttribute("data-scene"), 10);
+        const hIdx = parseInt(btn.getAttribute("data-highlight"), 10);
+        currentScenes[sIdx].highlights.splice(hIdx, 1);
+        renderSceneCards(currentScenes);
+      });
+    });
+
+    // Add Highlight Button Handler
+    document.querySelectorAll(".add-highlight-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const sIdx = parseInt(btn.getAttribute("data-scene"), 10);
+        if (!currentScenes[sIdx].highlights) currentScenes[sIdx].highlights = [];
+        if (currentScenes[sIdx].highlights.length >= 5) {
+          alert("Maximum 5 highlights per scene card to maintain slide legibility.");
+          return;
+        }
+        currentScenes[sIdx].highlights.push("Key takeaway point");
+        renderSceneCards(currentScenes);
+      });
+    });
+
+    // Delete Scene Button Handler
+    document.querySelectorAll(".delete-scene-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const sIdx = parseInt(btn.getAttribute("data-scene"), 10);
+        if (currentScenes.length <= 1) {
+          alert("Video requires at least 1 scene.");
+          return;
+        }
+        currentScenes.splice(sIdx, 1);
+        // Re-index scenes
+        currentScenes.forEach((s, i) => { s.sceneIndex = i + 1; });
+        scriptText.value = currentScenes.map(s => s.script).join("\n\n");
+        renderSceneCards(currentScenes);
+      });
+    });
+
+    // Add New Scene Button Handler
+    document.getElementById("addNewSceneBtn").addEventListener("click", () => {
+      const newIdx = currentScenes.length + 1;
+      currentScenes.push({
+        sceneIndex: newIdx,
+        title: `Scene ${newIdx}: Topic & Objectives`,
+        script: `Enter the spoken narrative for Scene ${newIdx} here.`,
+        highlights: [
+          "Primary objective or action item",
+          "Secondary operational guideline"
+        ]
+      });
+      scriptText.value = currentScenes.map(s => s.script).join("\n\n");
+      renderSceneCards(currentScenes);
     });
   }
 
@@ -336,8 +424,48 @@ document.addEventListener("DOMContentLoaded", () => {
       avatarUrlContainer.classList.toggle("hidden", val !== "url");
       avatarUploadContainer.classList.toggle("hidden", val !== "upload");
       avatarGenerateContainer.classList.toggle("hidden", val !== "generate");
+      if (val === "preset") {
+        updatePresenterPreview();
+      }
     });
   });
+
+  // Live Preview for Uploaded Avatar Video File
+  if (avatarFile) {
+    avatarFile.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        if (uploadFilename) uploadFilename.textContent = `Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
+        const objectUrl = URL.createObjectURL(file);
+        if (presenterPreviewPlayer) {
+          presenterPreviewPlayer.src = objectUrl;
+          presenterPreviewPlayer.load();
+          presenterPreviewPlayer.play().catch(() => {});
+        }
+        if (presenterPreviewName) {
+          presenterPreviewName.textContent = `Uploaded File: ${file.name}`;
+        }
+        logMessage(`Selected local avatar video: ${file.name}`, "info");
+      }
+    });
+  }
+
+  // Live Preview for Remote Avatar URL
+  if (avatarUrlInput) {
+    avatarUrlInput.addEventListener("input", (e) => {
+      const url = e.target.value.trim();
+      if (url && (url.startsWith("http://") || url.startsWith("https://"))) {
+        if (presenterPreviewPlayer) {
+          presenterPreviewPlayer.src = url;
+          presenterPreviewPlayer.load();
+          presenterPreviewPlayer.play().catch(() => {});
+        }
+        if (presenterPreviewName) {
+          presenterPreviewName.textContent = "Remote URL Avatar";
+        }
+      }
+    });
+  }
 
   // Kling AI Avatar Generator
   generateAvatarBtn.addEventListener("click", async () => {
@@ -511,6 +639,42 @@ document.addEventListener("DOMContentLoaded", () => {
       if (selectedOpt && selectedOpt.value) {
         selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"));
       }
+    });
+  }
+
+  // Quick Start Audio Reuse Handlers (Tab 1)
+  if (tab1LoadAudioBtn && tab1PreviousAudioSelect) {
+    tab1LoadAudioBtn.addEventListener("click", () => {
+      const selectedOpt = tab1PreviousAudioSelect.options[tab1PreviousAudioSelect.selectedIndex];
+      if (!selectedOpt || !selectedOpt.value) {
+        alert("Please choose a previous audio track from the dropdown first.");
+        return;
+      }
+      const audioUrl = selectedOpt.value;
+      const text = selectedOpt.getAttribute("data-text") || "";
+      selectActiveAudio(audioUrl, null, text);
+      if (text) {
+        scriptText.value = text;
+        analyzeScriptBtn.click(); // Auto-generates scene cards for immediate editing!
+        logMessage(`Loaded audio track and auto-generated scenes for editing.`, "success");
+      } else {
+        alert("Audio track loaded! You can now customize scenes or continue to Step 3.");
+      }
+    });
+  }
+
+  if (tab1DirectToPresenterBtn && tab1PreviousAudioSelect) {
+    tab1DirectToPresenterBtn.addEventListener("click", () => {
+      const selectedOpt = tab1PreviousAudioSelect.options[tab1PreviousAudioSelect.selectedIndex];
+      if (!selectedOpt || !selectedOpt.value) {
+        alert("Please choose a previous audio track from the dropdown first.");
+        return;
+      }
+      const audioUrl = selectedOpt.value;
+      const text = selectedOpt.getAttribute("data-text") || "";
+      selectActiveAudio(audioUrl, null, text);
+      switchTab(3); // Jump straight to Step 3: Video & Presenter!
+      logMessage("Audio loaded! Jumped directly to Step 3. Pick your presenter and generate video.", "info");
     });
   }
 
@@ -805,20 +969,17 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await response.json();
       if (!data.success) return;
 
-      // Populate Previous Audio dropdown in Tab 2
-      if (previousAudioSelect) {
-        previousAudioSelect.innerHTML = `<option value="">-- Or choose an audio file from history --</option>`;
-        const audioItems = (data.history || []).filter(h => h.audioUrl);
-        audioItems.forEach(item => {
-          const opt = document.createElement("option");
-          opt.value = item.audioUrl;
-          const snippet = (item.text || "").replace(/"/g, '&quot;');
-          opt.setAttribute("data-text", snippet);
-          const shortText = item.text && item.text.length > 42 ? item.text.substring(0, 42) + "..." : (item.text || "Audio Track");
-          opt.textContent = `${formatHistoryDate(item)} — "${shortText}"`;
-          previousAudioSelect.appendChild(opt);
-        });
-      }
+      // Populate Previous Audio dropdowns in Tab 1 and Tab 2
+      const audioItems = (data.history || []).filter(h => h.audioUrl);
+      const audioOptions = [`<option value="">-- Choose an audio file from history --</option>`];
+      audioItems.forEach(item => {
+        const snippet = (item.text || "").replace(/"/g, '&quot;');
+        const shortText = item.text && item.text.length > 42 ? item.text.substring(0, 42) + "..." : (item.text || "Audio Track");
+        audioOptions.push(`<option value="${item.audioUrl}" data-text="${snippet}">${formatHistoryDate(item)} — "${shortText}"</option>`);
+      });
+      const optionsHtml = audioOptions.join("");
+      if (previousAudioSelect) previousAudioSelect.innerHTML = optionsHtml;
+      if (tab1PreviousAudioSelect) tab1PreviousAudioSelect.innerHTML = optionsHtml;
 
       const historyList = document.getElementById("historyList");
       historyList.innerHTML = "";
