@@ -150,7 +150,7 @@
             <select id="voice" name="voice" 
               class="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200">
               <optgroup label="Deepgram Aura TTS (Ultra Fast &amp; Natural)">
-                <option value="aura-asteria-en" selected>Asteria (Deepgram US Female - Conversational)</option>
+                <option value="aura-asteria-en">Asteria (Deepgram US Female - Conversational)</option>
                 <option value="aura-stella-en">Stella (Deepgram US Female - Professional)</option>
                 <option value="aura-athena-en">Athena (Deepgram UK Female - Clear &amp; Smooth)</option>
                 <option value="aura-luna-en">Luna (Deepgram US Female - Soft &amp; Casual)</option>
@@ -160,7 +160,7 @@
                 <option value="aura-perseus-en">Perseus (Deepgram US Male - Dynamic)</option>
                 <option value="aura-angus-en">Angus (Deepgram UK Male - Conversational)</option>
                 <option value="aura-zeus-en">Zeus (Deepgram US Male - Deep &amp; Formal)</option>
-                <option value="aura-helios-en">Helios (Deepgram UK Male - Friendly)</option>
+                <option value="aura-helios-en" selected>Helios (Deepgram UK Male - Friendly)</option>
               </optgroup>
               <optgroup label="Kokoro TTS - American Female">
                 <option value="af_bella">Bella (American Female - Default)</option>
@@ -354,7 +354,7 @@
             <select id="avatarPreset" name="avatarPreset" 
               class="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-xs focus:outline-none focus:border-violet-500 transition-all">
               <optgroup label="Female Presenters">
-                <option value="preset_female_1" selected>Sarah - Professional Corporate (Modern Office)</option>
+                <option value="preset_female_1">Sarah - Professional Corporate (Modern Office)</option>
                 <option value="preset_female_2">Emma - Warm &amp; Friendly (Studio Neutral)</option>
                 <option value="preset_female_3">Jessica - Executive Leadership (Skyline Office)</option>
                 <option value="preset_female_4">Chloe - Casual Tech Presenter (Bright Loft)</option>
@@ -366,7 +366,7 @@
                 <option value="preset_male_2">James - Technical Trainer (Modern Studio)</option>
                 <option value="preset_male_3">Marcus - Black Presenter (Executive Office)</option>
                 <option value="preset_male_4">Rohan - South Asian Presenter (Studio Neutral)</option>
-                <option value="preset_male_5">Alex - Creative Presenter (Open Office)</option>
+                <option value="preset_male_5" selected>Alex - Creative Presenter (Open Office)</option>
               </optgroup>
               <optgroup label="Saved Custom Avatars" id="customAvatarsOptGroup">
                 <!-- Dynamically populated from /api/custom-avatars -->
@@ -377,10 +377,10 @@
             <div id="presenterPreviewContainer" class="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex flex-col items-center space-y-2">
               <div class="flex items-center justify-between w-full px-1">
                 <span class="text-[10px] uppercase font-semibold text-slate-400">Presenter Live Preview</span>
-                <span id="presenterPreviewName" class="text-xs text-violet-400 font-semibold">Sarah - Professional Corporate</span>
+                <span id="presenterPreviewName" class="text-xs text-violet-400 font-semibold">Alex - Creative Presenter</span>
               </div>
               <div class="relative w-full max-w-xs aspect-video bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
-                <video id="presenterPreviewPlayer" src="/presets/female_1.mp4" autoplay loop muted playsinline class="w-full h-full object-cover rounded-xl"></video>
+                <video id="presenterPreviewPlayer" src="/presets/male_5.mp4" autoplay loop muted playsinline class="w-full h-full object-cover rounded-xl"></video>
               </div>
             </div>
           </div>
@@ -627,6 +627,6 @@
   </main>
 
   <!-- Script -->
-  <script src="/app.js?v=202609101030"></script>
+  <script src="/app.js?v=202609101100"></script>
 </body>
 </html>

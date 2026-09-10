@@ -965,26 +965,38 @@ app.post("/api/generate-audio", async (req, res) => {
 // Helper to start Fal.ai async queue prediction
 async function startFalPrediction(endpointId, input, apiKey) {
   const url = `https://queue.fal.run/${endpointId}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Key ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(input)
-  });
+  const maxAttempts = 4;
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Key ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    });
 
-  if (!response.ok) {
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        requestId: data.request_id,
+        statusUrl: data.status_url,
+        responseUrl: data.response_url
+      };
+    }
+
     const errorText = await response.text();
-    throw new Error(`Fal.ai API error (${response.status}): ${errorText}`);
-  }
+    lastError = new Error(`Fal.ai API error (${response.status}): ${errorText}`);
 
-  const data = await response.json();
-  return {
-    requestId: data.request_id,
-    statusUrl: data.status_url,
-    responseUrl: data.response_url
-  };
+    // Retry on 5xx (transient), fail fast on 4xx
+    if (response.status < 500 || attempt === maxAttempts) throw lastError;
+
+    const backoffMs = 5000 * attempt;
+    console.log(`[Fal.ai] Submission failed (${response.status}), retrying in ${backoffMs / 1000}s... (attempt ${attempt}/${maxAttempts})`);
+    await new Promise(resolve => setTimeout(resolve, backoffMs));
+  }
+  throw lastError;
 }
 
 // Helper to poll Fal.ai async queue prediction until completion
@@ -1019,7 +1031,7 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
       // The job already finished rendering on Fal's side at this point, so a transient
       // 5xx here (e.g. 504 downstream_service_unavailable) shouldn't sink an already-paid-for
       // result. Retry a few times with backoff before giving up.
-      const maxAttempts = 5;
+      const maxAttempts = 12;
       let lastError;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const resultResponse = await fetch(responseUrl, {
@@ -1041,7 +1053,7 @@ async function pollFalPrediction(statusUrl, responseUrl, apiKey, jobId = null) {
           throw lastError;
         }
 
-        const backoffMs = 3000 * attempt;
+        const backoffMs = Math.min(5000 * attempt, 30000); // ramp up to 30s cap
         const msg = `Fal.ai result fetch failed (${resultResponse.status}), retrying in ${backoffMs / 1000}s... (attempt ${attempt}/${maxAttempts})`;
         if (jobId) {
           addJobLog(jobId, msg);
