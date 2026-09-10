@@ -255,12 +255,48 @@ document.addEventListener("DOMContentLoaded", () => {
     updateDeleteBtnVisibility();
   }
 
+  // Presenter preview video player
+  const presenterPreviewPlayer = document.getElementById("presenterPreviewPlayer");
+  const presenterPreviewName = document.getElementById("presenterPreviewName");
+
+  const presetVideoMap = {
+    preset_female_1: { src: "/presets/female_1.mp4", name: "Sarah - Professional Corporate" },
+    preset_female_2: { src: "/presets/female_2.mp4", name: "Emma - Warm & Friendly" },
+    preset_female_3: { src: "/presets/female_3.mp4", name: "Jessica - Executive Leadership" },
+    preset_female_4: { src: "/presets/female_4.mp4", name: "Chloe - Casual Tech Presenter" },
+    preset_female_5: { src: "/presets/female_5.mp4", name: "Amara - Black Presenter" },
+    preset_female_6: { src: "/presets/female_6.mp4", name: "Mei - Asian Presenter" },
+    preset_male_1:   { src: "/presets/male_1.mp4",   name: "David - Corporate Executive" },
+    preset_male_2:   { src: "/presets/male_2.mp4",   name: "James - Technical Trainer" },
+    preset_male_3:   { src: "/presets/male_3.mp4",   name: "Marcus - Black Presenter" },
+    preset_male_4:   { src: "/presets/male_4.mp4",   name: "Rohan - South Asian Presenter" },
+    preset_male_5:   { src: "/presets/male_5.mp4",   name: "Alex - Creative Presenter" }
+  };
+
+  function updatePresenterPreview() {
+    const val = avatarPreset.value;
+    const info = presetVideoMap[val];
+    if (info && presenterPreviewPlayer) {
+      presenterPreviewPlayer.src = info.src;
+      presenterPreviewPlayer.load();
+      presenterPreviewPlayer.play().catch(() => {});
+    }
+    if (info && presenterPreviewName) {
+      presenterPreviewName.textContent = info.name;
+    } else if (presenterPreviewName) {
+      presenterPreviewName.textContent = "Custom Avatar";
+    }
+  }
+
   function updateDeleteBtnVisibility() {
     const isCustomSelected = avatarPreset.value && avatarPreset.value.startsWith("custom_");
     deleteCustomAvatarBtn.classList.toggle("hidden", !isCustomSelected);
   }
 
-  avatarPreset.addEventListener("change", updateDeleteBtnVisibility);
+  avatarPreset.addEventListener("change", () => {
+    updateDeleteBtnVisibility();
+    updatePresenterPreview();
+  });
 
   deleteCustomAvatarBtn.addEventListener("click", async () => {
     const selectedId = avatarPreset.value;
@@ -366,9 +402,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (provider === "fal") {
       const engines = [
-        { value: "fal_sync_labs", label: "Sync Labs (Lipsync-2 Pro - Best Quality)" },
-        { value: "fal_latentsync", label: "LatentSync (Natural Face Expression)" },
-        { value: "fal_wav2lip", label: "Wav2Lip (Fast Lip-Sync)" }
+        { value: "fal_sync_labs",   label: "Sync Labs Lipsync-2 Pro — ~$0.08/min · Best Quality" },
+        { value: "fal_latentsync",  label: "LatentSync — ~$0.02/min · Natural Expression" },
+        { value: "fal_wav2lip",     label: "Wav2Lip — ~$0.01/min · Fastest / Cheapest" }
       ];
       engines.forEach(eng => {
         const opt = document.createElement("option");
@@ -378,9 +414,9 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     } else {
       const engines = [
-        { value: "sync_lipsync_2_pro", label: "Sync Labs Lipsync-2 Pro (Replicate)" },
-        { value: "sync_lipsync_2", label: "Sync Labs Lipsync-2 (Replicate)" },
-        { value: "latentsync", label: "ByteDance LatentSync (Replicate)" }
+        { value: "sync_lipsync_2_pro", label: "Sync Labs Lipsync-2 Pro — ~$0.10/min · Best Quality" },
+        { value: "sync_lipsync_2",     label: "Sync Labs Lipsync-2 — ~$0.05/min · Good Quality" },
+        { value: "latentsync",         label: "ByteDance LatentSync — ~$0.03/min · Natural Expression" }
       ];
       engines.forEach(eng => {
         const opt = document.createElement("option");
@@ -389,8 +425,29 @@ document.addEventListener("DOMContentLoaded", () => {
         lipsyncEngine.appendChild(opt);
       });
     }
+
+    // Update the cost hint below the dropdown
+    updateEngineCostHint();
   }
 
+  function updateEngineCostHint() {
+    const hintEl = document.getElementById("engineCostHint");
+    if (!hintEl) return;
+    const costMap = {
+      fal_sync_labs:      { cost: "~$0.08/min",  quality: "⭐ Best lip-sync fidelity" },
+      fal_latentsync:     { cost: "~$0.02/min",  quality: "Natural head movement & expression" },
+      fal_wav2lip:        { cost: "~$0.01/min",  quality: "Fast, slightly lower detail" },
+      sync_lipsync_2_pro: { cost: "~$0.10/min",  quality: "⭐ Best lip-sync fidelity" },
+      sync_lipsync_2:     { cost: "~$0.05/min",  quality: "Good general-purpose quality" },
+      latentsync:         { cost: "~$0.03/min",  quality: "Natural head movement & expression" }
+    };
+    const info = costMap[lipsyncEngine.value];
+    if (info) {
+      hintEl.textContent = `Est. cost: ${info.cost} of output video · ${info.quality}`;
+    }
+  }
+
+  lipsyncEngine.addEventListener("change", updateEngineCostHint);
   lipsyncProvider.addEventListener("change", updateLipsyncEngines);
   updateLipsyncEngines();
 
