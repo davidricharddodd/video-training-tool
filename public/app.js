@@ -63,6 +63,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const outputVideoPlayer = document.getElementById("outputVideoPlayer");
   const videoSource = document.getElementById("videoSource");
   const downloadBtn = document.getElementById("downloadBtn");
+  const downloadAudioBtn = document.getElementById("downloadAudioBtn");
+  const downloadVttBtn = document.getElementById("downloadVttBtn");
+  const previousAudioSelect = document.getElementById("previousAudioSelect");
+  const usePreviousAudioBtn = document.getElementById("usePreviousAudioBtn");
   
   const consoleLogs = document.getElementById("consoleLogs");
   const clearLogsBtn = document.getElementById("clearLogsBtn");
@@ -208,6 +212,8 @@ document.addEventListener("DOMContentLoaded", () => {
       input.addEventListener("input", (e) => {
         const idx = parseInt(e.target.getAttribute("data-scene"), 10);
         currentScenes[idx].script = e.target.value;
+        // Keep main speech script synchronized with scene cards
+        scriptText.value = currentScenes.map(s => s.script).join("\n\n");
       });
     });
 
@@ -470,6 +476,44 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let generatedAudioFilename = null;
 
+  // Helper to activate an audio track (either newly generated or loaded from history)
+  function selectActiveAudio(audioUrl, filename, textSnippet) {
+    if (!audioUrl) return;
+    const cleanFilename = filename || audioUrl.split("/").pop();
+    generatedAudioFilename = cleanFilename;
+    audioPreviewSource.src = audioUrl;
+    audioPreviewPlayer.load();
+    videoActionContainer.classList.remove("hidden");
+    if (downloadAudioBtn) downloadAudioBtn.href = audioUrl;
+    
+    // If text snippet provided and scriptText is empty, populate it
+    if (textSnippet && (!scriptText.value || !scriptText.value.trim())) {
+      scriptText.value = textSnippet;
+    }
+
+    logMessage(`Audio selected: ${cleanFilename} ${textSnippet ? `("${textSnippet.substring(0, 35)}...")` : ""}`, "success");
+  }
+
+  // Previous Audio Selection Handler (Tab 2)
+  if (usePreviousAudioBtn && previousAudioSelect) {
+    usePreviousAudioBtn.addEventListener("click", () => {
+      const selectedOpt = previousAudioSelect.options[previousAudioSelect.selectedIndex];
+      if (!selectedOpt || !selectedOpt.value) {
+        alert("Please choose a previous audio track from the dropdown first.");
+        return;
+      }
+      selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"));
+      alert("Previous audio track loaded! You can now continue to Step 3 to select presenter & generate video.");
+    });
+
+    previousAudioSelect.addEventListener("change", () => {
+      const selectedOpt = previousAudioSelect.options[previousAudioSelect.selectedIndex];
+      if (selectedOpt && selectedOpt.value) {
+        selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"));
+      }
+    });
+  }
+
   // Step 2: Generate Audio Preview
   generateAudioBtn.addEventListener("click", async () => {
     const text = scriptText.value;
@@ -513,13 +557,14 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(data.error || "Failed to generate audio.");
       }
 
-      generatedAudioFilename = data.filename;
-      logMessage(`Audio generated successfully! Preview URL: ${data.audioUrl}`, "success");
-      loadHistory();
+      selectActiveAudio(data.audioUrl, data.filename, text);
 
-      audioPreviewSource.src = data.audioUrl;
-      audioPreviewPlayer.load();
-      videoActionContainer.classList.remove("hidden");
+      let pauseReport = "";
+      if (data.pauseCount > 0) {
+        pauseReport = ` [${data.pauseCount} pause(s) injected, ~${data.totalPauseDuration}s silence]`;
+      }
+      logMessage(`Audio preview ready!${pauseReport} (URL: ${data.audioUrl})`, "success");
+      loadHistory();
 
     } catch (err) {
       console.error(err);
@@ -648,6 +693,9 @@ document.addEventListener("DOMContentLoaded", () => {
             videoSource.src = job.videoUrl;
             outputVideoPlayer.load();
             downloadBtn.href = job.videoUrl;
+            if (downloadAudioBtn && generatedAudioFilename) {
+              downloadAudioBtn.href = `/uploads/${generatedAudioFilename}`;
+            }
 
             logMessage(`Video processing complete! Output URL: ${job.videoUrl}`, "success");
             loadHistory();
@@ -678,12 +726,99 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Helper: Format history item timestamps gracefully (resolving Invalid Date)
+  function formatHistoryDate(item) {
+    const raw = item.timestamp || item.createdAt || item.updatedAt;
+    if (!raw) return "Recent";
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return "Recent";
+    return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // Format seconds to WebVTT timestamp (HH:MM:SS.mmm)
+  function formatVttTimestamp(seconds) {
+    const s = Math.max(0, parseFloat(seconds) || 0);
+    const hrs = Math.floor(s / 3600);
+    const mins = Math.floor((s % 3600) / 60);
+    const secs = Math.floor(s % 60);
+    const ms = Math.floor((s % 1) * 1000);
+    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+  }
+
+  // Generate WebVTT subtitles synchronized to scenes
+  function generateVttContent(scenes, totalDuration) {
+    let vtt = "WEBVTT - Training Video Subtitles\n\n";
+    if (!scenes || scenes.length === 0) {
+      const fallbackText = scriptText.value.trim() || "Training Video Module";
+      vtt += `1\n00:00:00.000 --> ${formatVttTimestamp(totalDuration || 60)}\n${fallbackText}\n\n`;
+      return vtt;
+    }
+
+    const dur = parseFloat(totalDuration) || (scenes.length * 10);
+    const sceneWeights = scenes.map(s => {
+      const words = (s.script || "").trim().split(/\s+/).filter(Boolean).length;
+      return Math.max(3, words);
+    });
+    const totalWeight = sceneWeights.reduce((a, b) => a + b, 0);
+
+    let currentTime = 0;
+    scenes.forEach((scene, index) => {
+      const sceneDur = (sceneWeights[index] / totalWeight) * dur;
+      const start = currentTime;
+      const end = (index === scenes.length - 1) ? dur : (currentTime + sceneDur);
+      currentTime = end;
+
+      const title = scene.title || `Scene ${index + 1}`;
+      const bullets = (scene.highlights || []).map(h => `• ${h}`).join("\n");
+      const textBlock = bullets ? `${title}\n${bullets}` : `${title}\n${scene.script}`;
+
+      vtt += `${index + 1}\n`;
+      vtt += `${formatVttTimestamp(start)} --> ${formatVttTimestamp(end)}\n`;
+      vtt += `${textBlock}\n\n`;
+    });
+
+    return vtt;
+  }
+
+  // VTT Subtitles Download Button
+  if (downloadVttBtn) {
+    downloadVttBtn.addEventListener("click", () => {
+      const dur = outputVideoPlayer.duration || 60;
+      const vttData = generateVttContent(currentScenes, dur);
+      const blob = new Blob([vttData], { type: "text/vtt;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const tempLink = document.createElement("a");
+      tempLink.href = url;
+      tempLink.download = "training_video_subtitles.vtt";
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      document.body.removeChild(tempLink);
+      URL.revokeObjectURL(url);
+      logMessage("VTT Subtitle file generated and downloaded successfully!", "success");
+    });
+  }
+
   // History loader
   async function loadHistory() {
     try {
       const response = await fetch("/api/history");
       const data = await response.json();
       if (!data.success) return;
+
+      // Populate Previous Audio dropdown in Tab 2
+      if (previousAudioSelect) {
+        previousAudioSelect.innerHTML = `<option value="">-- Or choose an audio file from history --</option>`;
+        const audioItems = (data.history || []).filter(h => h.audioUrl);
+        audioItems.forEach(item => {
+          const opt = document.createElement("option");
+          opt.value = item.audioUrl;
+          const snippet = (item.text || "").replace(/"/g, '&quot;');
+          opt.setAttribute("data-text", snippet);
+          const shortText = item.text && item.text.length > 42 ? item.text.substring(0, 42) + "..." : (item.text || "Audio Track");
+          opt.textContent = `${formatHistoryDate(item)} — "${shortText}"`;
+          previousAudioSelect.appendChild(opt);
+        });
+      }
 
       const historyList = document.getElementById("historyList");
       historyList.innerHTML = "";
@@ -697,8 +832,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const itemDiv = document.createElement("div");
         itemDiv.className = "p-3 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2 text-xs";
         
-        const dateStr = new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const textSnippet = item.text.length > 60 ? item.text.substring(0, 60) + "..." : item.text;
+        const dateStr = formatHistoryDate(item);
+        const textSnippet = item.text && item.text.length > 60 ? item.text.substring(0, 60) + "..." : (item.text || "Audio track");
 
         let statusBadge = `<span class="px-2 py-0.5 bg-amber-950/60 text-amber-400 border border-amber-800 rounded text-[10px]">Audio Preview</span>`;
         if (item.videoUrl) {
@@ -711,13 +846,33 @@ document.addEventListener("DOMContentLoaded", () => {
             ${statusBadge}
           </div>
           <p class="text-slate-300 font-medium">${textSnippet}</p>
-          <div class="flex items-center space-x-3 pt-1">
-            ${item.audioUrl ? `<a href="${item.audioUrl}" target="_blank" class="text-violet-400 hover:underline text-[11px]">🎵 Audio Track</a>` : ''}
-            ${item.videoUrl ? `<a href="${item.videoUrl}" target="_blank" class="text-fuchsia-400 hover:underline text-[11px]">🎥 Video MP4</a>` : ''}
+          <div class="flex items-center justify-between pt-1">
+            <div class="flex items-center space-x-3">
+              ${item.audioUrl ? `<a href="${item.audioUrl}" target="_blank" class="text-violet-400 hover:underline text-[11px]">🎵 Audio Track</a>` : ''}
+              ${item.videoUrl ? `<a href="${item.videoUrl}" target="_blank" class="text-fuchsia-400 hover:underline text-[11px]">🎥 Video MP4</a>` : ''}
+            </div>
+            ${item.audioUrl ? `
+              <button type="button" class="use-audio-btn px-2 py-0.5 bg-violet-950/80 hover:bg-violet-900 border border-violet-800/80 text-violet-300 hover:text-white rounded text-[10px] font-semibold transition-all cursor-pointer"
+                data-audio="${item.audioUrl}" data-text="${(item.text || '').replace(/"/g, '&quot;')}">
+                ⚡ Use Audio
+              </button>
+            ` : ''}
           </div>
         `;
         historyList.appendChild(itemDiv);
       });
+
+      // Attach click handlers to "Use Audio" buttons in History cards
+      document.querySelectorAll(".use-audio-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const audioUrl = btn.getAttribute("data-audio");
+          const text = btn.getAttribute("data-text");
+          selectActiveAudio(audioUrl, null, text);
+          switchTab(3); // Navigate user directly to Presenter selection!
+          logMessage("Loaded previous audio! Choose your presenter in Step 3 and generate.", "info");
+        });
+      });
+
     } catch (err) {
       console.error("Failed to load history:", err);
     }

@@ -97,13 +97,21 @@ class HistoryDB {
   }
 
   addOrUpdate(id, record) {
+    const now = new Date().toISOString();
     const idx = this.history.findIndex(item => item.id === id);
     if (idx !== -1) {
-      this.history[idx] = { ...this.history[idx], ...record, updatedAt: new Date().toISOString() };
+      this.history[idx] = { 
+        ...this.history[idx], 
+        ...record, 
+        timestamp: this.history[idx].timestamp || now,
+        updatedAt: now 
+      };
     } else {
       this.history.unshift({
         id,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
+        timestamp: now,
         ...record
       });
     }
@@ -262,9 +270,28 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
     filterParts.push(`[bg_canvas][fg_rounded]overlay=x=${xPos}:y=70[v_comp]`);
     currentStream = "v_comp";
 
-    // 3. Add Scene Highlight Overlays if scenes are provided
+    // 3. Add Scene Highlight Overlays if scenes are provided (proportional to spoken words & pauses)
     if (scenes && scenes.length > 0) {
-      const sceneDuration = (audioDuration || 60) / scenes.length;
+      const totalDur = parseFloat(audioDuration) || 60;
+
+      // Calculate relative speech weight for each scene
+      const sceneWeights = scenes.map(s => {
+        const text = (s.script || "").replace(/\[pause[^\]]*\]/gi, " ");
+        const words = text.trim().split(/\s+/).filter(Boolean).length;
+        
+        let pauseSec = 0;
+        const pauseMatches = (s.script || "").matchAll(/\[pause(?:\s*:\s*|\s+)?(\d+(?:\.\d+)?)?\s*s?\]/gi);
+        for (const m of pauseMatches) {
+          pauseSec += m[1] ? parseFloat(m[1]) : 1.0;
+        }
+        // Baseline 2.5 words per second speaking rate
+        return Math.max(3, words + (pauseSec * 2.5));
+      });
+
+      const totalWeight = sceneWeights.reduce((a, b) => a + b, 0);
+      let cumulativeTime = 0;
+
+      console.log(`[Scene Overlay] Calculating speech-synchronized timing for ${scenes.length} scenes (Total Audio: ${totalDur.toFixed(1)}s)...`);
 
       for (let i = 0; i < scenes.length; i++) {
         const scene = scenes[i];
@@ -275,10 +302,16 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
 
         inputs.push(`-i "${svgPath}"`);
         const overlayIdx = nextInputIdx++;
-        const startTime = (i * sceneDuration).toFixed(2);
-        const endTime = ((i + 1) * sceneDuration).toFixed(2);
-        const outStreamName = `v_scene_${i}`;
 
+        const isLast = (i === scenes.length - 1);
+        const thisSceneDuration = (sceneWeights[i] / totalWeight) * totalDur;
+        const startTime = cumulativeTime.toFixed(2);
+        const endTime = isLast ? totalDur.toFixed(2) : (cumulativeTime + thisSceneDuration).toFixed(2);
+        cumulativeTime += thisSceneDuration;
+
+        console.log(`[Scene Overlay] Scene ${i + 1} ("${(scene.title || '').substring(0, 30)}..."): ${startTime}s -> ${endTime}s (${thisSceneDuration.toFixed(1)}s)`);
+
+        const outStreamName = `v_scene_${i}`;
         filterParts.push(`[${currentStream}][${overlayIdx}:v]overlay=0:0:enable='between(t,${startTime},${endTime})'[${outStreamName}]`);
         currentStream = outStreamName;
       }
@@ -425,22 +458,23 @@ function getLanguageCode(voice) {
 
 // Splits script text into smaller sentence-sized chunks (<250 chars) and pause durations
 function splitTextIntoChunks(text, maxChars = 250) {
-  const regex = /\[pause\s+(\d+(?:\.\d+)?)]/g;
+  // Matches [pause 1.0], [pause 1.0s], [pause 1s], [pause], [pause: 1.5s] etc.
+  const regex = /\[pause(?:\s*:\s*|\s+)?(\d+(?:\.\d+)?)?\s*s?\]/gi;
   let match;
   let rawParts = [];
   let lastIndex = 0;
 
   while ((match = regex.exec(text)) !== null) {
     const textPart = text.substring(lastIndex, match.index);
-    if (textPart) {
+    if (textPart && textPart.trim()) {
       rawParts.push({ type: "text", content: textPart });
     }
-    const duration = parseFloat(match[1]);
+    const duration = match[1] ? parseFloat(match[1]) : 1.0;
     rawParts.push({ type: "pause", duration });
     lastIndex = regex.lastIndex;
   }
   const remainingText = text.substring(lastIndex);
-  if (remainingText) {
+  if (remainingText && remainingText.trim()) {
     rawParts.push({ type: "text", content: remainingText });
   }
 
@@ -451,8 +485,9 @@ function splitTextIntoChunks(text, maxChars = 250) {
       continue;
     }
 
-    // Normalize line breaks and extra spaces within each text part
-    const cleanContent = part.content.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
+    // Strip any remaining pause syntax from text chunks before sending to TTS
+    let cleanContent = part.content.replace(/\[pause[^\]]*\]/gi, " ");
+    cleanContent = cleanContent.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
     if (!cleanContent) continue;
 
     // If clean text is short, add it directly
@@ -485,78 +520,167 @@ function splitTextIntoChunks(text, maxChars = 250) {
   return finalParts;
 }
 
-// Helper: Format bullet point strings cleanly
+// Conversational and presentation filler prefixes to strip for executive slide bullets
+const FILLER_PREFIXES = [
+  /^(?:in this (?:video|module|session|section|lesson|part),?\s*(?:we will|we'll|we will be|we're going to|let's)?)\s*/i,
+  /^(?:today,?\s*(?:we will|we're going to|we'll|let's)?)\s*/i,
+  /^(?:let's (?:take a look at|talk about|discuss|dive into|explore|examine|start with)?)\s*/i,
+  /^(?:as you (?:can see|already know|might know),?)\s*/i,
+  /^(?:it's (?:really |very )?(?:important|crucial|essential|vital) (?:that|to))\s*/i,
+  /^(?:make sure (?:that )?(?:you|to)?)\s*/i,
+  /^(?:you (?:will |'ll )?(?:want to|need to|should|must|can))\s*/i,
+  /^(?:we (?:will |'ll )?(?:want to|need to|should|must|can))\s*/i,
+  /^(?:first (?:of all)?,?)\s*/i,
+  /^(?:second(?:ly)?,?)\s*/i,
+  /^(?:third(?:ly)?,?)\s*/i,
+  /^(?:next,?)\s*/i,
+  /^(?:then,?)\s*/i,
+  /^(?:finally,?)\s*/i,
+  /^(?:remember to)\s*/i,
+  /^(?:always remember to)\s*/i,
+  /^(?:be sure to)\s*/i,
+  /^(?:don't forget to)\s*/i,
+  /^(?:so,?\s*)/i,
+  /^(?:basically,?\s*)/i
+];
+
+// Helper: Format bullet point strings into concise, executive takeaways
 function formatHighlightString(str) {
-  let cleaned = str.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
-  cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
-  cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
-  if (cleaned.length > 58) {
-    cleaned = cleaned.substring(0, 55).trim() + "...";
+  if (!str) return "";
+  let cleaned = str.replace(/\[pause[^\]]*\]/gi, " ").trim();
+
+  // Strip conversational filler prefixes iteratively
+  for (let i = 0; i < 3; i++) {
+    for (const prefix of FILLER_PREFIXES) {
+      cleaned = cleaned.replace(prefix, "").trim();
+    }
   }
+
+  // Remove leading non-alphanumeric punctuation
+  cleaned = cleaned.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
+  cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
+  // Remove trailing conjunctions, prepositions, or punctuation
+  cleaned = cleaned.replace(/\s+\b(?:and|or|with|that|for|in|at|to|by|of)\b$/i, "").trim();
+  cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
+
+  if (!cleaned) return "";
+
+  // Keep bullet point concise (4 to 8 words, max ~50 characters for crisp on-screen reading)
+  const words = cleaned.split(" ");
+  if (words.length > 8 || cleaned.length > 52) {
+    cleaned = words.slice(0, 7).join(" ");
+    cleaned = cleaned.replace(/\s+\b(?:and|or|with|that|for|in|at|to|by|of)\b$/i, "").trim();
+    cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
+  }
+
   if (!cleaned) return "";
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
-// Helper: Extract 3-4 concise bullet points from a scene's text without stripping key words
+// Helper: Extract 3-4 concise pedagogical summary bullet points from a scene's text
 function extractHighlightsFromText(text) {
-  const cleanRaw = text.replace(/\[pause \d+(\.\d+)?\]/gi, "").trim();
+  const cleanRaw = text.replace(/\[pause[^\]]*\]/gi, " ").trim();
   if (!cleanRaw) return [];
 
-  const rawUnits = cleanRaw.split(/[\n;—–\.\!\?]+|,\s+/);
+  // Split scene into candidate sentences and key clause units
+  const rawSentences = cleanRaw.split(/[\n\.\!\?]+/).map(s => s.trim()).filter(Boolean);
   const candidatePhrases = [];
 
-  for (let unit of rawUnits) {
-    unit = unit.trim();
-    if (!unit) continue;
-
-    if (unit.length > 65) {
-      const subParts = unit.split(/\b(?:and|with|that|which|before|after|including|for)\b/i);
-      for (let sub of subParts) {
-        const cleaned = formatHighlightString(sub);
-        if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+  for (const sentence of rawSentences) {
+    // If compound sentence with commas/semicolons/dashes, extract clauses
+    const clauses = sentence.split(/[,;—–]\s+/).map(c => c.trim()).filter(c => c.length >= 8);
+    if (clauses.length > 1) {
+      for (const clause of clauses) {
+        const formatted = formatHighlightString(clause);
+        if (formatted && formatted.length >= 10 && formatted.split(" ").length >= 2) {
+          candidatePhrases.push(formatted);
+        }
       }
     } else {
-      const cleaned = formatHighlightString(unit);
-      if (cleaned.length >= 10) candidatePhrases.push(cleaned);
+      const formatted = formatHighlightString(sentence);
+      if (formatted && formatted.length >= 10 && formatted.split(" ").length >= 2) {
+        candidatePhrases.push(formatted);
+      }
     }
   }
 
+  // Deduplicate and filter candidates
   const unique = [];
   for (const p of candidatePhrases) {
-    if (!unique.includes(p) && unique.length < 4) {
+    const isSimilar = unique.some(existing => 
+      existing.toLowerCase() === p.toLowerCase() ||
+      existing.toLowerCase().includes(p.toLowerCase()) ||
+      p.toLowerCase().includes(existing.toLowerCase())
+    );
+    if (!isSimilar && unique.length < 4) {
       unique.push(p);
     }
   }
 
+  // Fallback if scene is very short or concise
   if (unique.length < 3) {
-    const sentences = cleanRaw.split(/[\.\!\?]+/).filter(Boolean);
-    for (const sent of sentences) {
-      const cleaned = formatHighlightString(sent);
-      if (cleaned && !unique.includes(cleaned) && unique.length < 4) {
-        unique.push(cleaned);
-      }
+    const words = cleanRaw.split(/\s+/).filter(Boolean);
+    if (words.length > 6 && unique.length < 1) {
+      unique.push(formatHighlightString(words.slice(0, 6).join(" ")));
     }
-  }
-
-  while (unique.length < 3) {
-    const idx = unique.length + 1;
-    unique.push(`Key Highlight ${idx} for this section`);
+    if (unique.length < 2) {
+      unique.push("Key concept review & application");
+    }
+    if (unique.length < 3) {
+      unique.push("Standard operational procedure");
+    }
   }
 
   return unique.slice(0, 4);
 }
 
-// Helper: Intelligent Scene Breakdown into targetCount scenes (default 6)
+// Helper: Generate a clear topic title for each scene
+function generateSceneTitle(sceneText, index) {
+  let clean = sceneText.replace(/\[pause[^\]]*\]/gi, " ").trim();
+  
+  // Look for explicit Step / Section / Module tags
+  const stepMatch = clean.match(/^(?:step\s*\d+|part\s*\d+|module\s*\d+|phase\s*\d+):?\s*([^.\n]+)/i);
+  if (stepMatch && stepMatch[1]) {
+    const words = stepMatch[1].trim().split(/\s+/).slice(0, 5).join(" ");
+    return `Scene ${index}: ${words.charAt(0).toUpperCase() + words.slice(1)}`;
+  }
+
+  // Strip conversational fillers
+  for (const prefix of FILLER_PREFIXES) {
+    clean = clean.replace(prefix, "").trim();
+  }
+
+  // Extract primary thought from first sentence
+  const firstSentence = clean.split(/[\.\!\?\n]+/)[0] || "";
+  const significantWords = firstSentence.split(/\s+/)
+    .map(w => w.replace(/[^a-zA-Z0-9]/g, ""))
+    .filter(w => w.length > 2 && !/^(the|and|for|with|that|this|you|are|our|all|can|will)$/i.test(w));
+
+  if (significantWords.length >= 2) {
+    const titleSnippet = significantWords.slice(0, 4).join(" ");
+    return `Scene ${index}: ${titleSnippet.charAt(0).toUpperCase() + titleSnippet.slice(1)}`;
+  }
+
+  return `Scene ${index}: Training Module Overview`;
+}
+
+// Helper: Intelligent Scene Breakdown into targetCount scenes
 function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   if (!rawText || !rawText.trim()) return [];
 
   const cleanText = rawText.replace(/\r?\n/g, "\n").trim();
   let units = [];
   const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
-  for (const para of paragraphs) {
-    const sents = para.split(/[\.\!\?]+/).map(s => s.trim()).filter(Boolean);
-    for (const s of sents) {
-      if (s.trim()) units.push(s.trim());
+
+  // If script already has clean paragraphs, use them as scene boundaries
+  if (paragraphs.length >= targetCount && paragraphs.length <= targetCount + 2) {
+    units = paragraphs;
+  } else {
+    for (const para of paragraphs) {
+      const sents = para.split(/[\.\!\?]+/).map(s => s.trim()).filter(Boolean);
+      for (const s of sents) {
+        if (s.trim()) units.push(s.trim());
+      }
     }
   }
 
@@ -601,9 +725,7 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   return sceneChunks.map((chunkSentences, index) => {
     const sceneText = chunkSentences.join(" ");
     const highlights = extractHighlightsFromText(sceneText);
-    const words = sceneText.split(/\s+/).filter(Boolean);
-    const titleWords = words.slice(0, 4).join(" ").replace(/[^a-zA-Z0-9 ]/g, "");
-    const title = `Scene ${index + 1}: ${titleWords.charAt(0).toUpperCase() + titleWords.slice(1)}...`;
+    const title = generateSceneTitle(sceneText, index + 1);
 
     return {
       sceneIndex: index + 1,
@@ -908,15 +1030,19 @@ app.post("/api/generate-audio", async (req, res) => {
       }
     }
 
-    // Merge segment files using ffmpeg complex filter
-    console.log(`[Audio Generation] Merging ${segmentFiles.length} segments...`);
+    const pauseCount = parts.filter(p => p.type === "pause").length;
+    const totalPauseDuration = parts.filter(p => p.type === "pause").reduce((sum, p) => sum + p.duration, 0);
+
+    // Merge segment files using ffmpeg complex filter with audio normalization
+    console.log(`[Audio Generation] Merging ${segmentFiles.length} segments (${pauseCount} pauses, ${totalPauseDuration}s silence)...`);
     let ffmpegArgs = [];
     let filterInputs = "";
     for (let i = 0; i < segmentFiles.length; i++) {
       ffmpegArgs.push(`-i "${segmentFiles[i]}"`);
-      filterInputs += `[${i}:a]`;
+      filterInputs += `[${i}:a]aresample=24000,aformat=sample_fmts=s16:sample_rates=24000:channel_layouts=mono[a${i}];`;
     }
-    const filterComplex = `"${filterInputs}concat=n=${segmentFiles.length}:v=0:a=1[a]"`;
+    const concatStreams = segmentFiles.map((_, i) => `[a${i}]`).join("");
+    const filterComplex = `"${filterInputs}${concatStreams}concat=n=${segmentFiles.length}:v=0:a=1[a]"`;
     await execPromise(
       `ffmpeg -y ${ffmpegArgs.join(" ")} -filter_complex ${filterComplex} -map "[a]" "${finalOutputPath}"`
     );
@@ -940,7 +1066,9 @@ app.post("/api/generate-audio", async (req, res) => {
     return res.status(200).json({
       success: true,
       audioUrl: `/uploads/${outputFilename}`,
-      filename: outputFilename
+      filename: outputFilename,
+      pauseCount: pauseCount,
+      totalPauseDuration: totalPauseDuration
     });
 
   } catch (error) {
