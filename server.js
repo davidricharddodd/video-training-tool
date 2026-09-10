@@ -354,7 +354,7 @@ async function loopVideoIfNeeded(videoSource, targetDuration) {
   // Reversed segment: drop first reversed frame (index 0, which is frame N-1) and drop last reversed frame (index N-1, which is frame 0)
   // Therefore, reversed trim: start_frame=1:end_frame=N-1
   await execPromise(
-    `ffmpeg -y -i "${videoSource}" -filter_complex "[0:v]trim=start_frame=0:end_frame=${frameCount},setpts=PTS-STARTPTS[f];[0:v]reverse,trim=start_frame=1:end_frame=${frameCount - 1},setpts=PTS-STARTPTS[r];[f][r]concat=n=2:v=1:a=0[outv]" -map "[outv]" -c:v libx264 -pix_fmt yuv420p "${pingpongFile}"`
+    `ffmpeg -y -i "${videoSource}" -filter_complex "[0:v]scale='if(gt(iw,ih),720,-2)':'if(gt(iw,ih),-2,720)',trim=start_frame=0:end_frame=${frameCount},setpts=PTS-STARTPTS[f];[0:v]scale='if(gt(iw,ih),720,-2)':'if(gt(iw,ih),-2,720)',reverse,trim=start_frame=1:end_frame=${frameCount - 1},setpts=PTS-STARTPTS[r];[f][r]concat=n=2:v=1:a=0[outv]" -map "[outv]" -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p "${pingpongFile}"`
   );
 
   const pingpongDuration = duration * 2;
