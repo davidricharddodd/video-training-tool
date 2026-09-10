@@ -13,6 +13,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const pauseBtns = document.querySelectorAll(".pause-btn");
   const analyzeScriptBtn = document.getElementById("analyzeScriptBtn");
   const targetSceneCount = document.getElementById("targetSceneCount");
+  const sceneModel = document.getElementById("sceneModel");
+  const sceneStyle = document.getElementById("sceneStyle");
+  const interScenePause = document.getElementById("interScenePause");
   const scenesContainer = document.getElementById("scenesContainer");
   const sceneCardsGrid = document.getElementById("sceneCardsGrid");
   const sceneCountLabel = document.getElementById("sceneCountLabel");
@@ -180,6 +183,8 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({
           text: rawText,
           targetSceneCount: targetSceneCount.value,
+          sceneModel: sceneModel ? sceneModel.value : "anthropic/claude-3-5-sonnet",
+          sceneStyle: sceneStyle ? sceneStyle.value : "action-sop",
           customFalToken: customFalToken
         })
       });
@@ -236,19 +241,30 @@ document.addEventListener("DOMContentLoaded", () => {
       const card = document.createElement("div");
       card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner relative group";
 
-      const sceneDur = sceneDurations[index];
-      const startStr = formatTime(cumulativeSec);
-      const endStr = formatTime(cumulativeSec + sceneDur);
-      const sceneStartSec = cumulativeSec;
-      cumulativeSec += sceneDur;
+      const isExact = (typeof scene.startTime === "number" && typeof scene.endTime === "number");
+      const sceneStartSec = isExact ? scene.startTime : cumulativeSec;
+      const sceneEndSec = isExact ? scene.endTime : (cumulativeSec + sceneDurations[index]);
+      const startStr = formatTime(sceneStartSec);
+      const endStr = formatTime(sceneEndSec);
+      const sceneDur = Math.max(1.0, sceneEndSec - sceneStartSec);
+      if (!isExact) cumulativeSec += sceneDurations[index];
+
+      const timingBadge = isExact
+        ? `<span class="text-[10px] bg-emerald-950/60 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-800 font-mono font-medium flex-shrink-0" title="Frame-accurate speech timing">🎯 ⏱️ ${startStr} - ${endStr}</span>`
+        : `<span class="text-[10px] bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-medium flex-shrink-0" title="Estimated timing (generate audio to lock exact speech time)">⏱️ ${startStr} - ${endStr}</span>`;
 
       const highlights = scene.highlights || [];
       const leadTime = Math.min(1.0, sceneDur * 0.15);
       const availDur = Math.max(1.0, sceneDur - leadTime);
 
       const highlightsHtml = highlights.map((hl, hIdx) => {
-        const offsetSec = leadTime + (hIdx * (availDur / Math.max(1, highlights.length)));
-        const revealTimeStr = formatTime(sceneStartSec + offsetSec);
+        let revealSec;
+        if (Array.isArray(scene.bulletOffsets) && typeof scene.bulletOffsets[hIdx] === "number") {
+          revealSec = scene.bulletOffsets[hIdx];
+        } else {
+          revealSec = sceneStartSec + leadTime + (hIdx * (availDur / Math.max(1, highlights.length)));
+        }
+        const revealTimeStr = formatTime(revealSec);
         return `
         <div class="flex items-center space-x-2 group/item">
           <span class="text-[9px] font-mono text-violet-400 bg-violet-950/70 border border-violet-800/60 px-1.5 py-0.5 rounded flex-shrink-0" title="Bullet reveals in video at ${revealTimeStr}">⏱️ ${revealTimeStr}</span>
@@ -266,7 +282,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="flex items-center justify-between border-b border-slate-850 pb-2 gap-2">
           <div class="flex items-center space-x-2 flex-1 min-w-0">
             <span class="text-[10px] bg-violet-950/60 text-violet-300 px-2 py-0.5 rounded border border-violet-800 font-semibold flex-shrink-0">Scene ${index + 1}</span>
-            <span class="text-[10px] bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-medium flex-shrink-0">⏱️ ${startStr} - ${endStr}</span>
+            ${timingBadge}
             <input type="text" value="${scene.title.replace(/"/g, '&quot;')}" data-scene="${index}" field="title"
               class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full truncate" />
           </div>
@@ -818,6 +834,7 @@ document.addEventListener("DOMContentLoaded", () => {
           customFalToken: falToken, 
           customDeepgramToken: deepgramToken,
           lipsyncProvider: lipsyncProvider.value,
+          interScenePause: interScenePause ? parseFloat(interScenePause.value) : 1.0,
           scenes: currentScenes && currentScenes.length > 0 ? JSON.stringify(currentScenes) : null
         })
       });
@@ -827,6 +844,9 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(data.error || "Failed to generate audio.");
       }
 
+      if (data.scenes && Array.isArray(data.scenes) && data.scenes.length > 0) {
+        currentScenes = data.scenes;
+      }
       selectActiveAudio(data.audioUrl, data.filename, text, currentScenes);
 
       let pauseReport = "";

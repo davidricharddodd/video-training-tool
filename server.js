@@ -297,31 +297,52 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
       for (let i = 0; i < scenes.length; i++) {
         const scene = scenes[i];
         const isLast = (i === scenes.length - 1);
-        const thisSceneDuration = (sceneWeights[i] / totalWeight) * totalDur;
-        const sceneStart = cumulativeTime;
-        const sceneEnd = isLast ? totalDur : (cumulativeTime + thisSceneDuration);
-        cumulativeTime += thisSceneDuration;
+        
+        let sceneStart, sceneEnd, thisSceneDuration;
+        const hasExactTimestamps = (typeof scene.startTime === "number" && typeof scene.endTime === "number");
+
+        if (hasExactTimestamps) {
+          sceneStart = scene.startTime;
+          // Keep slide visible across inter-scene breathing pause until next scene starts
+          if (!isLast && typeof scenes[i + 1]?.startTime === "number") {
+            sceneEnd = scenes[i + 1].startTime;
+          } else {
+            sceneEnd = isLast ? totalDur : scene.endTime;
+          }
+          thisSceneDuration = Math.max(1.0, sceneEnd - sceneStart);
+        } else {
+          thisSceneDuration = (sceneWeights[i] / totalWeight) * totalDur;
+          sceneStart = cumulativeTime;
+          sceneEnd = isLast ? totalDur : (cumulativeTime + thisSceneDuration);
+          cumulativeTime += thisSceneDuration;
+        }
 
         const highlights = (scene.highlights || []).slice(0, 4);
-        const cleanScript = (scene.script || "").replace(/\[pause[^\]]*\]/gi, " ").trim();
-        const sentences = cleanScript.split(/[\.\!\?\n]+/).map(s => s.trim()).filter(Boolean);
-
-        // Calculate progressive reveal timestamps within this scene
-        const leadTime = Math.min(1.0, thisSceneDuration * 0.15); // Lead time for title card to establish
-        const availableDuration = Math.max(1.0, thisSceneDuration - leadTime);
         const revealOffsets = [];
 
-        if (sentences.length >= highlights.length && highlights.length > 0) {
-          const sentenceWordCounts = sentences.slice(0, highlights.length).map(s => s.split(/\s+/).filter(Boolean).length);
-          const totalWords = sentenceWordCounts.reduce((a, b) => a + b, 0) || 1;
-          let currOffset = leadTime;
+        if (Array.isArray(scene.bulletOffsets) && scene.bulletOffsets.length === highlights.length) {
+          // Use exact pre-calculated bullet offsets from measured audio
           for (let k = 0; k < highlights.length; k++) {
-            revealOffsets.push(currOffset);
-            currOffset += (sentenceWordCounts[k] / totalWords) * availableDuration;
+            revealOffsets.push(Math.max(0, scene.bulletOffsets[k] - sceneStart));
           }
-        } else if (highlights.length > 0) {
-          for (let k = 0; k < highlights.length; k++) {
-            revealOffsets.push(leadTime + (k * (availableDuration / highlights.length)));
+        } else {
+          const cleanScript = (scene.script || "").replace(/\[pause[^\]]*\]/gi, " ").trim();
+          const sentences = cleanScript.split(/[\.\!\?\n]+/).map(s => s.trim()).filter(Boolean);
+          const leadTime = Math.min(1.0, thisSceneDuration * 0.15); // Lead time for title card to establish
+          const availableDuration = Math.max(1.0, thisSceneDuration - leadTime);
+
+          if (sentences.length >= highlights.length && highlights.length > 0) {
+            const sentenceWordCounts = sentences.slice(0, highlights.length).map(s => s.split(/\s+/).filter(Boolean).length);
+            const totalWords = sentenceWordCounts.reduce((a, b) => a + b, 0) || 1;
+            let currOffset = leadTime;
+            for (let k = 0; k < highlights.length; k++) {
+              revealOffsets.push(currOffset);
+              currOffset += (sentenceWordCounts[k] / totalWords) * availableDuration;
+            }
+          } else if (highlights.length > 0) {
+            for (let k = 0; k < highlights.length; k++) {
+              revealOffsets.push(leadTime + (k * (availableDuration / highlights.length)));
+            }
           }
         }
 
@@ -817,22 +838,45 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   });
 }
 
-// AI-Powered Scene Breakdown calling Fal.ai any-llm (OpenAI GPT-4o-mini)
-async function breakdownScriptIntoScenesWithAI(rawText, targetCount = 6, customFalApiKey = null) {
+// AI-Powered Scene Breakdown calling Fal.ai any-llm (Claude 3.5 Sonnet, GPT-4o, GPT-4o-mini, Gemini)
+async function breakdownScriptIntoScenesWithAI(rawText, targetCount = 6, customFalApiKey = null, requestedModel = "anthropic/claude-3-5-sonnet", style = "action-sop") {
   if (!rawText || !rawText.trim()) return [];
 
   const apiKey = customFalApiKey || process.env.FAL_KEY;
   if (apiKey) {
     try {
-      console.log(`[AI Scene Breakdown] Querying Fal.ai any-llm (gpt-4o-mini) for ${targetCount} instructional scenes...`);
-      const systemPrompt = "You are an elite instructional designer and executive video producer. Transform training narration scripts into structured learning scenes with calculated executive takeaway bullet points.";
+      const activeModel = requestedModel || "anthropic/claude-3-5-sonnet";
+      console.log(`[AI Scene Breakdown] Querying Fal.ai any-llm (${activeModel}, style: ${style}) for ${targetCount} instructional scenes...`);
+
+      let styleGuidance = "";
+      if (style === "action-sop") {
+        styleGuidance = `HIGHLIGHTS PEDAGOGICAL STYLE: Action Items & Standard Operating Procedures.
+- Every single bullet point MUST begin with a strong, active imperative verb (e.g., "Verify Circuit Isolation", "Inspect Equipment Tags", "Calibrate Valve Pressure", "Document Compliance Checkpoints").
+- No passive voice, conversational pronouns, or filler phrases. 3 to 6 words each.`;
+      } else if (style === "executive") {
+        styleGuidance = `HIGHLIGHTS PEDAGOGICAL STYLE: Executive Takeaways & Strategic Business Impact.
+- Every bullet point MUST highlight a critical organizational priority, strategic impact, or executive takeaway (e.g., "Mitigate Statutory Financial Penalties", "Protect Contingent Workforce Rights", "Strengthen Compliance Audit Trail").
+- 3 to 6 words each.`;
+      } else if (style === "compliance") {
+        styleGuidance = `HIGHLIGHTS PEDAGOGICAL STYLE: Compliance, Regulatory & Statutory Criteria.
+- Every bullet point MUST state an unambiguous legal rule, eligibility condition, statutory threshold, or filing requirement (e.g., "Qualify for Statutory Opt-Out", "Submit Formal Notice Prior to Engagement", "Maintain Independent Business Structure").
+- 3 to 6 words each.`;
+      } else {
+        styleGuidance = `HIGHLIGHTS PEDAGOGICAL STYLE: Core Concepts & Foundational Definitions.
+- Every bullet point MUST define or clarify a core learning concept or operational mechanism (e.g., "Define Deemed Employment Status", "Identify Direction & Control Factors", "Distinguish PSC vs Sole Trader").
+- 3 to 6 words each.`;
+      }
+
+      const systemPrompt = `You are an elite instructional designer and executive video producer. Transform training narration scripts into structured, sequential learning scenes with crisp, high-impact on-screen slide highlights.`;
       const userPrompt = `Divide this training narration script into exactly ${targetCount} sequential, coherent training scenes.
+
+${styleGuidance}
 
 For each scene provide:
 - "sceneIndex": integer starting at 1
 - "title": A concise, professional 2-4 word topic title (e.g. "Scene 1: System Isolation Protocol")
 - "script": The verbatim script portion for this scene
-- "highlights": Exactly 3 to 4 concise executive summary bullet points (each 3 to 6 words). CRITICAL: Do NOT copy verbatim conversational sentences or filler phrases! Calculate true instructional takeaways, imperatives, and action items (e.g., "Verify Pressure Gauge Readings", "Isolate Main Power Supply", "Document Equipment Checkpoints").
+- "highlights": Exactly 3 to 4 concise executive summary bullet points (each 3 to 6 words). CRITICAL: Do NOT copy verbatim conversational sentences or filler phrases! Strictly adhere to the requested style guidelines.
 
 Script:
 """
@@ -851,7 +895,7 @@ Respond with ONLY valid JSON:
   ]
 }`;
 
-      const response = await fetch("https://fal.run/fal-ai/any-llm", {
+      let response = await fetch("https://fal.run/fal-ai/any-llm", {
         method: "POST",
         headers: {
           "Authorization": `Key ${apiKey}`,
@@ -860,9 +904,26 @@ Respond with ONLY valid JSON:
         body: JSON.stringify({
           prompt: userPrompt,
           system_prompt: systemPrompt,
-          model: "openai/gpt-4o-mini"
+          model: activeModel
         })
       });
+
+      // If requested model returned an error and was not gpt-4o-mini, fallback to gpt-4o-mini
+      if (!response.ok && activeModel !== "openai/gpt-4o-mini") {
+        console.warn(`[AI Scene Breakdown] Model ${activeModel} failed (${response.status}), retrying with openai/gpt-4o-mini fallback...`);
+        response = await fetch("https://fal.run/fal-ai/any-llm", {
+          method: "POST",
+          headers: {
+            "Authorization": `Key ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            prompt: userPrompt,
+            system_prompt: systemPrompt,
+            model: "openai/gpt-4o-mini"
+          })
+        });
+      }
 
       if (response.ok) {
         const data = await response.json();
@@ -871,7 +932,7 @@ Respond with ONLY valid JSON:
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
           if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
-            console.log(`[AI Scene Breakdown] Successfully generated ${parsed.scenes.length} pedagogical scenes with AI.`);
+            console.log(`[AI Scene Breakdown] Successfully generated ${parsed.scenes.length} pedagogical scenes with AI (${activeModel}).`);
             return parsed.scenes.map((s, idx) => ({
               sceneIndex: idx + 1,
               title: s.title || `Scene ${idx + 1}: Training Overview`,
@@ -1044,13 +1105,13 @@ async function runDeepgramTTS(text, voice, apiKey, outputPath) {
 // Route: Analyze script and break down into N scenes with 3-4 calculated key highlights
 app.post("/api/breakdown-scenes", async (req, res) => {
   try {
-    const { text, targetSceneCount, customFalToken } = req.body;
+    const { text, targetSceneCount, customFalToken, sceneModel, sceneStyle } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ success: false, error: "Text script cannot be empty." });
     }
 
     const count = parseInt(targetSceneCount, 10) || 6;
-    const scenes = await breakdownScriptIntoScenesWithAI(text, count, customFalToken);
+    const scenes = await breakdownScriptIntoScenesWithAI(text, count, customFalToken, sceneModel, sceneStyle);
 
     return res.status(200).json({
       success: true,
@@ -1068,7 +1129,7 @@ app.post("/api/generate-audio", async (req, res) => {
   let activeProvider = "replicate";
   try {
     console.log(`[Audio Generation Request] Received body:`, req.body);
-    const { text, voice, customToken, customFalToken, customDeepgramToken, lipsyncProvider, scenes: scenesRaw } = req.body;
+    const { text, voice, customToken, customFalToken, customDeepgramToken, lipsyncProvider, scenes: scenesRaw, interScenePause = 1.0 } = req.body;
     let scenes = null;
     if (scenesRaw) {
       try {
@@ -1121,14 +1182,130 @@ app.post("/api/generate-audio", async (req, res) => {
     const resolvedLang = getLanguageCode(voice);
     console.log(`[Audio Generation] Resolved language code: "${resolvedLang}" for voice: "${voice}" (Provider: ${activeProvider})`);
 
-    // Parse and split text into sentence-sized segments and pauses (using larger 1000-char limits to prevent rate limits)
-    const parts = splitTextIntoChunks(text, 1000);
-    console.log(`[Audio Generation] Script split into ${parts.length} segments.`);
-
     // Generate output jobId
     const audioJobId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
     const outputFilename = `audio-${audioJobId}.wav`;
     const finalOutputPath = path.join("public", "uploads", outputFilename);
+
+    // If structured scenes are present, synthesize speech per scene with exact inter-scene breathing pauses
+    if (scenes && Array.isArray(scenes) && scenes.length > 0) {
+      console.log(`[Audio Generation] Synthesizing speech per-scene for ${scenes.length} scenes with ${interScenePause}s inter-scene pauses...`);
+      const tempOutputDir = os.tmpdir();
+      const segmentFiles = [];
+      const tempFilesToClean = [];
+      let currentTimeline = 0;
+      const pauseGap = typeof interScenePause === "number" ? Math.max(0, interScenePause) : 1.0;
+
+      for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        const sceneText = (scene.script || "").trim() || `Scene ${i + 1}`;
+        const sceneAudioFile = path.join(tempOutputDir, `scene_${audioJobId}_${i}.wav`);
+        tempFilesToClean.push(sceneAudioFile);
+
+        console.log(`[Audio Generation] Synthesizing Scene ${i + 1}/${scenes.length} ("${sceneText.substring(0, 40)}...")...`);
+        if (isDeepgram) {
+          await runDeepgramTTS(sceneText, voice, deepgramApiKey, sceneAudioFile);
+        } else if (activeProvider === "fal") {
+          const audioUrl = await runFalTTS(sceneText, voice, apiToken, `${audioJobId}_${i}`);
+          await downloadFile(audioUrl, sceneAudioFile);
+        } else {
+          const audioOutput = await runWithRetry(
+            replicate,
+            "jaaari/kokoro-82m:f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13",
+            {
+              input: {
+                text: sceneText,
+                voice: voice || "af_bella",
+                speed: 1.0
+              },
+            }
+          );
+          await downloadFile(audioOutput.toString(), sceneAudioFile);
+        }
+
+        const sceneDur = await getDuration(sceneAudioFile);
+        scene.startTime = parseFloat(currentTimeline.toFixed(2));
+        scene.audioDuration = parseFloat(sceneDur.toFixed(2));
+        scene.endTime = parseFloat((currentTimeline + sceneDur).toFixed(2));
+
+        // Calculate progressive bullet reveal offsets within this scene's measured audio duration
+        const highlights = scene.highlights || [];
+        const cleanScript = sceneText.replace(/\[pause[^\]]*\]/gi, " ").trim();
+        const sentences = cleanScript.split(/[\.\!\?\n]+/).map(s => s.trim()).filter(Boolean);
+        const leadTime = Math.min(1.0, sceneDur * 0.15);
+        const availDur = Math.max(0.5, sceneDur - leadTime);
+        scene.bulletOffsets = [];
+
+        if (sentences.length >= highlights.length && highlights.length > 0) {
+          const sentenceWords = sentences.slice(0, highlights.length).map(s => s.split(/\s+/).filter(Boolean).length);
+          const totalWords = sentenceWords.reduce((a, b) => a + b, 0) || 1;
+          let curOff = leadTime;
+          for (let k = 0; k < highlights.length; k++) {
+            scene.bulletOffsets.push(parseFloat((scene.startTime + curOff).toFixed(2)));
+            curOff += (sentenceWords[k] / totalWords) * availDur;
+          }
+        } else {
+          for (let k = 0; k < highlights.length; k++) {
+            scene.bulletOffsets.push(parseFloat((scene.startTime + leadTime + (k * (availDur / Math.max(1, highlights.length)))).toFixed(2)));
+          }
+        }
+
+        segmentFiles.push(sceneAudioFile);
+        currentTimeline += sceneDur;
+
+        // If not the last scene and pauseGap > 0, insert silence segment
+        if (i < scenes.length - 1 && pauseGap > 0) {
+          const pauseFile = path.join(tempOutputDir, `pause_${audioJobId}_${i}.wav`);
+          tempFilesToClean.push(pauseFile);
+          await execPromise(
+            `ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t ${pauseGap} "${pauseFile}"`
+          );
+          segmentFiles.push(pauseFile);
+          currentTimeline += pauseGap;
+        }
+      }
+
+      // Merge all scene segments and pauses into master track
+      console.log(`[Audio Generation] Merging ${segmentFiles.length} scene audio segments into master track (Total: ${currentTimeline.toFixed(2)}s)...`);
+      let ffmpegArgs = [];
+      let filterInputs = "";
+      for (let k = 0; k < segmentFiles.length; k++) {
+        ffmpegArgs.push(`-i "${segmentFiles[k]}"`);
+        filterInputs += `[${k}:a]aresample=24000,aformat=sample_fmts=s16:sample_rates=24000:channel_layouts=mono[a${k}];`;
+      }
+      const concatStreams = segmentFiles.map((_, k) => `[a${k}]`).join("");
+      const filterComplex = `"${filterInputs}${concatStreams}concat=n=${segmentFiles.length}:v=0:a=1[a]"`;
+      await execPromise(
+        `ffmpeg -y ${ffmpegArgs.join(" ")} -filter_complex ${filterComplex} -map "[a]" "${finalOutputPath}"`
+      );
+
+      // Clean up temporary segment files
+      cleanUpTempFiles(tempFilesToClean);
+
+      // Save to database history with exact frame-accurate timestamps
+      db.addOrUpdate(audioJobId, {
+        text: text,
+        voice: voice || "aura-asteria-en",
+        audioUrl: `/uploads/${outputFilename}`,
+        scenes: scenes,
+        videoUrl: null,
+        lipsyncEngine: null,
+        avatarPreset: null,
+        status: "audio_preview"
+      });
+
+      return res.status(200).json({
+        success: true,
+        audioUrl: `/uploads/${outputFilename}`,
+        filename: outputFilename,
+        scenes: scenes,
+        totalDuration: currentTimeline
+      });
+    }
+
+    // Fallback for unstructured single scripts: split text into sentence-sized segments
+    const parts = splitTextIntoChunks(text, 1000);
+    console.log(`[Audio Generation] Script split into ${parts.length} segments.`);
 
     // If there is only one short text chunk, execute a single quick TTS call
     if (parts.length === 1 && parts[0].type === "text") {

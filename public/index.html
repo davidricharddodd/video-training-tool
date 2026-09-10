@@ -133,6 +133,43 @@
               class="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition-all duration-200 resize-none h-60"></textarea>
           </div>
 
+          <!-- Scene Breakdown & Audio Timing Controls -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl">
+            <div>
+              <label for="sceneModel" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                AI Scene Breakdown Model
+              </label>
+              <select id="sceneModel" class="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-violet-500">
+                <option value="anthropic/claude-3-5-sonnet" selected>Claude 3.5 Sonnet (Elite Instructional)</option>
+                <option value="openai/gpt-4o">GPT-4o (Executive &amp; Thorough)</option>
+                <option value="openai/gpt-4o-mini">GPT-4o-mini (Fast &amp; Direct)</option>
+                <option value="google/gemini-flash-1.5">Gemini 1.5 Flash (Quick Summary)</option>
+              </select>
+            </div>
+            <div>
+              <label for="sceneStyle" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                Instructional Slide Style
+              </label>
+              <select id="sceneStyle" class="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-violet-500">
+                <option value="action-sop" selected>Action Items &amp; SOP (Verify, Isolate, Execute)</option>
+                <option value="executive">Executive Takeaways (Strategic &amp; Impactful)</option>
+                <option value="compliance">Compliance &amp; Legal (Rules, Criteria, Forms)</option>
+                <option value="conceptual">Key Concepts (Definitions &amp; Explanations)</option>
+              </select>
+            </div>
+            <div>
+              <label for="interScenePause" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                Inter-Scene Breathing Pause
+              </label>
+              <select id="interScenePause" class="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-violet-500">
+                <option value="0.5">0.5s (Brisk Pace)</option>
+                <option value="1.0" selected>1.0s (Natural Breathing - Recommended)</option>
+                <option value="1.5">1.5s (Deliberate Learning Gap)</option>
+                <option value="2.0">2.0s (Structured Chapter Break)</option>
+              </select>
+            </div>
+          </div>
+
           <div class="flex items-center justify-between pt-2">
             <button type="button" id="analyzeScriptBtn"
               class="py-3 px-6 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-semibold rounded-xl text-xs shadow-lg shadow-violet-950/20 flex items-center space-x-2 transition-all cursor-pointer">
@@ -717,6 +754,6 @@
   </main>
 
   <!-- Script -->
-  <script src="/app.js?v=202609101430"></script>
+  <script src="/app.js?v=202609101500"></script>
 </body>
 </html>
