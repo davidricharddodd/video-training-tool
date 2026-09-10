@@ -520,7 +520,40 @@ function splitTextIntoChunks(text, maxChars = 250) {
   return finalParts;
 }
 
-// Conversational and presentation filler prefixes to strip for executive slide bullets
+// Action patterns for calculated instructional-design takeaway bullet points
+const ACTION_PATTERNS = [
+  { match: "verify|validate|confirm|double-check", label: "Verify" },
+  { match: "inspect|examine|look over|check over", label: "Inspect" },
+  { match: "shut(?:ting)?\\s*down|shutdown|deactivate|turn(?:ing)?\\s*off|power(?:ing)?\\s*down", label: "Shut Down" },
+  { match: "activate|enable|power(?:ing)?\\s*on|turn(?:ing)?\\s*on", label: "Activate" },
+  { match: "isolate|disconnect|lock(?:ing)?\\s*out|lockout|tag(?:ging)?\\s*out", label: "Isolate & Lockout" },
+  { match: "maintain|service|upkeep", label: "Maintain" },
+  { match: "calibrate|adjust|zero out", label: "Calibrate" },
+  { match: "configure|setup|set up", label: "Configure" },
+  { match: "document|record|log|note down", label: "Document" },
+  { match: "report|notify|escalate|inform", label: "Report" },
+  { match: "monitor|observe|watch|track", label: "Monitor" },
+  { match: "test|benchmark|assess|evaluate", label: "Test" },
+  { match: "audit|review", label: "Review" },
+  { match: "follow|adhere to|comply with", label: "Follow" },
+  { match: "prevent|avoid|mitigate|minimize", label: "Prevent" },
+  { match: "prepare|organize|stage", label: "Prepare" },
+  { match: "clean|sanitize|clear", label: "Clean" },
+  { match: "secure|fasten|tighten|lock", label: "Secure" },
+  { match: "install|mount|attach|connect", label: "Install" },
+  { match: "wear|equip|don|use", label: "Equip & Wear" },
+  { match: "remove|detach|dispose of", label: "Remove" },
+  { match: "replace|swap out|exchange", label: "Replace" },
+  { match: "execute|perform|carry out|conduct", label: "Perform" },
+  { match: "check", label: "Check" },
+  { match: "ensure", label: "Ensure" }
+];
+
+function toTitleCase(str) {
+  return str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substr(1).toLowerCase());
+}
+
+// Conversational and presentation filler prefixes to strip
 const FILLER_PREFIXES = [
   /^(?:in this (?:video|module|session|section|lesson|part),?\s*(?:we will|we'll|we will be|we're going to|let's)?)\s*/i,
   /^(?:today,?\s*(?:we will|we're going to|we'll|let's)?)\s*/i,
@@ -544,94 +577,79 @@ const FILLER_PREFIXES = [
   /^(?:basically,?\s*)/i
 ];
 
-// Helper: Format bullet point strings into concise, executive takeaways
-function formatHighlightString(str) {
-  if (!str) return "";
-  let cleaned = str.replace(/\[pause[^\]]*\]/gi, " ").trim();
-
-  // Strip conversational filler prefixes iteratively
-  for (let i = 0; i < 3; i++) {
-    for (const prefix of FILLER_PREFIXES) {
-      cleaned = cleaned.replace(prefix, "").trim();
-    }
-  }
-
-  // Remove leading non-alphanumeric punctuation
-  cleaned = cleaned.replace(/^[^a-zA-Z0-9"'\(\)]+/, "").trim();
-  cleaned = cleaned.replace(/[\s\t\n]+/g, " ");
-  // Remove trailing conjunctions, prepositions, or punctuation
-  cleaned = cleaned.replace(/\s+\b(?:and|or|with|that|for|in|at|to|by|of)\b$/i, "").trim();
-  cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
-
-  if (!cleaned) return "";
-
-  // Keep bullet point concise (4 to 8 words, max ~50 characters for crisp on-screen reading)
-  const words = cleaned.split(" ");
-  if (words.length > 8 || cleaned.length > 52) {
-    cleaned = words.slice(0, 7).join(" ");
-    cleaned = cleaned.replace(/\s+\b(?:and|or|with|that|for|in|at|to|by|of)\b$/i, "").trim();
-    cleaned = cleaned.replace(/[,;—–:\.!?]+$/, "").trim();
-  }
-
-  if (!cleaned) return "";
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-}
-
-// Helper: Extract 3-4 concise pedagogical summary bullet points from a scene's text
+// Helper: Extract calculated action-predicate takeaways from speech (not sentence pulls)
 function extractHighlightsFromText(text) {
   const cleanRaw = text.replace(/\[pause[^\]]*\]/gi, " ").trim();
   if (!cleanRaw) return [];
 
-  // Split scene into candidate sentences and key clause units
   const rawSentences = cleanRaw.split(/[\n\.\!\?]+/).map(s => s.trim()).filter(Boolean);
-  const candidatePhrases = [];
+  const takeaways = [];
 
   for (const sentence of rawSentences) {
-    // If compound sentence with commas/semicolons/dashes, extract clauses
-    const clauses = sentence.split(/[,;—–]\s+/).map(c => c.trim()).filter(c => c.length >= 8);
-    if (clauses.length > 1) {
-      for (const clause of clauses) {
-        const formatted = formatHighlightString(clause);
-        if (formatted && formatted.length >= 10 && formatted.split(" ").length >= 2) {
-          candidatePhrases.push(formatted);
+    let handled = false;
+    for (const pat of ACTION_PATTERNS) {
+      const regex = new RegExp(`\\b(?:${pat.match})\\b\\s*([^,.!?]+)`, "i");
+      const match = sentence.match(regex);
+      if (match && match[1]) {
+        let objectPhrase = match[1].trim();
+        // Remove leading pronouns, articles, demonstratives
+        objectPhrase = objectPhrase.replace(/^(?:that\s+the|that\s+|the\s+|your\s+|our\s+|all\s+|any\s+|this\s+|these\s+|each\s+)/i, "");
+        // Strip subordinate trailing clauses
+        objectPhrase = objectPhrase.replace(/\s+(?:before|after|while|in order to|so that|and then|because|to ensure|is|are|was)[\s\S]*/i, "");
+        // Strip trailing conjunctions/prepositions
+        objectPhrase = objectPhrase.replace(/\s+\b(?:and|or|with|that|for|in|at|to|by|of|on)\b$/i, "").trim();
+        
+        const words = objectPhrase.split(/\s+/).filter(w => !/^(and|or|with|to|in|at|for|of|by|on)$/i.test(w)).slice(0, 4);
+        if (words.length >= 1) {
+          const item = `${pat.label} ${toTitleCase(words.join(" "))}`;
+          if (!takeaways.some(t => t.toLowerCase() === item.toLowerCase()) && takeaways.length < 4) {
+            takeaways.push(item);
+            handled = true;
+            break;
+          }
         }
       }
-    } else {
-      const formatted = formatHighlightString(sentence);
-      if (formatted && formatted.length >= 10 && formatted.split(" ").length >= 2) {
-        candidatePhrases.push(formatted);
+    }
+
+    // If no explicit action pattern matched this sentence, extract core topic concept
+    if (!handled && takeaways.length < 4) {
+      let cleanSentence = sentence;
+      for (const prefix of FILLER_PREFIXES) {
+        cleanSentence = cleanSentence.replace(prefix, "").trim();
+      }
+      const clauses = cleanSentence.split(/[,;—–]\s+/).map(c => c.trim()).filter(c => c.length >= 10);
+      const targetClause = clauses[0] || cleanSentence;
+      const words = targetClause.split(/\s+/)
+        .map(w => w.replace(/[^a-zA-Z0-9]/g, ""))
+        .filter(w => w.length > 2 && !/^(the|and|for|with|that|this|you|are|our|all|can|will|from|have|been)$/i.test(w));
+      
+      if (words.length >= 2) {
+        const item = toTitleCase(words.slice(0, 4).join(" "));
+        if (!takeaways.some(t => t.toLowerCase() === item.toLowerCase()) && takeaways.length < 4) {
+          takeaways.push(item);
+        }
       }
     }
   }
 
-  // Deduplicate and filter candidates
-  const unique = [];
-  for (const p of candidatePhrases) {
-    const isSimilar = unique.some(existing => 
-      existing.toLowerCase() === p.toLowerCase() ||
-      existing.toLowerCase().includes(p.toLowerCase()) ||
-      p.toLowerCase().includes(existing.toLowerCase())
-    );
-    if (!isSimilar && unique.length < 4) {
-      unique.push(p);
+  // Ensure 3-4 professional takeaways exist
+  if (takeaways.length < 3) {
+    const significantWords = cleanRaw.split(/\s+/)
+      .map(w => w.replace(/[^a-zA-Z]/g, ""))
+      .filter(w => w.length > 3 && !/^(this|that|with|from|have|been|will|your|about|there|where|when|which|these|those)$/i.test(w));
+    
+    if (significantWords.length >= 2 && takeaways.length < 1) {
+      takeaways.push(`Review ${toTitleCase(significantWords.slice(0, 3).join(" "))}`);
+    }
+    if (takeaways.length < 2) {
+      takeaways.push("Execute Core Training Procedures");
+    }
+    if (takeaways.length < 3) {
+      takeaways.push("Verify Quality & Safety Standards");
     }
   }
 
-  // Fallback if scene is very short or concise
-  if (unique.length < 3) {
-    const words = cleanRaw.split(/\s+/).filter(Boolean);
-    if (words.length > 6 && unique.length < 1) {
-      unique.push(formatHighlightString(words.slice(0, 6).join(" ")));
-    }
-    if (unique.length < 2) {
-      unique.push("Key concept review & application");
-    }
-    if (unique.length < 3) {
-      unique.push("Standard operational procedure");
-    }
-  }
-
-  return unique.slice(0, 4);
+  return takeaways.slice(0, 4);
 }
 
 // Helper: Generate a clear topic title for each scene
@@ -658,13 +676,13 @@ function generateSceneTitle(sceneText, index) {
 
   if (significantWords.length >= 2) {
     const titleSnippet = significantWords.slice(0, 4).join(" ");
-    return `Scene ${index}: ${titleSnippet.charAt(0).toUpperCase() + titleSnippet.slice(1)}`;
+    return `Scene ${index}: ${toTitleCase(titleSnippet)}`;
   }
 
   return `Scene ${index}: Training Module Overview`;
 }
 
-// Helper: Intelligent Scene Breakdown into targetCount scenes
+// Helper: Intelligent Scene Breakdown into targetCount scenes (Algorithmic)
 function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   if (!rawText || !rawText.trim()) return [];
 
@@ -734,6 +752,82 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
       highlights: highlights
     };
   });
+}
+
+// AI-Powered Scene Breakdown calling Fal.ai any-llm (OpenAI GPT-4o-mini)
+async function breakdownScriptIntoScenesWithAI(rawText, targetCount = 6, customFalApiKey = null) {
+  if (!rawText || !rawText.trim()) return [];
+
+  const apiKey = customFalApiKey || process.env.FAL_KEY;
+  if (apiKey) {
+    try {
+      console.log(`[AI Scene Breakdown] Querying Fal.ai any-llm (gpt-4o-mini) for ${targetCount} instructional scenes...`);
+      const systemPrompt = "You are an elite instructional designer and executive video producer. Transform training narration scripts into structured learning scenes with calculated executive takeaway bullet points.";
+      const userPrompt = `Divide this training narration script into exactly ${targetCount} sequential, coherent training scenes.
+
+For each scene provide:
+- "sceneIndex": integer starting at 1
+- "title": A concise, professional 2-4 word topic title (e.g. "Scene 1: System Isolation Protocol")
+- "script": The verbatim script portion for this scene
+- "highlights": Exactly 3 to 4 concise executive summary bullet points (each 3 to 6 words). CRITICAL: Do NOT copy verbatim conversational sentences or filler phrases! Calculate true instructional takeaways, imperatives, and action items (e.g., "Verify Pressure Gauge Readings", "Isolate Main Power Supply", "Document Equipment Checkpoints").
+
+Script:
+"""
+${rawText}
+"""
+
+Respond with ONLY valid JSON:
+{
+  "scenes": [
+    {
+      "sceneIndex": 1,
+      "title": "Scene 1: Safety Overview",
+      "script": "...",
+      "highlights": ["Takeaway 1", "Takeaway 2", "Takeaway 3"]
+    }
+  ]
+}`;
+
+      const response = await fetch("https://fal.run/fal-ai/any-llm", {
+        method: "POST",
+        headers: {
+          "Authorization": `Key ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          prompt: userPrompt,
+          system_prompt: systemPrompt,
+          model: "openai/gpt-4o-mini"
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const rawOutput = data.output || data.choices?.[0]?.message?.content || "";
+        const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
+            console.log(`[AI Scene Breakdown] Successfully generated ${parsed.scenes.length} pedagogical scenes with AI.`);
+            return parsed.scenes.map((s, idx) => ({
+              sceneIndex: idx + 1,
+              title: s.title || `Scene ${idx + 1}: Training Overview`,
+              script: s.script || "",
+              highlights: Array.isArray(s.highlights) ? s.highlights.slice(0, 4) : []
+            }));
+          }
+        }
+      } else {
+        const errText = await response.text();
+        console.warn(`[AI Scene Breakdown] Fal any-llm error (${response.status}): ${errText}`);
+      }
+    } catch (err) {
+      console.warn(`[AI Scene Breakdown] AI call error, falling back to algorithmic summarizer:`, err.message);
+    }
+  }
+
+  // Fallback to advanced algorithmic action-predicate summarizer
+  return breakdownScriptIntoScenes(rawText, targetCount);
 }
 
 // Helper to generate a clean, modern SVG slide overlay card with 3-4 bullet points
@@ -866,16 +960,16 @@ async function runDeepgramTTS(text, voice, apiKey, outputPath) {
   return outputPath;
 }
 
-// Route: Analyze script and break down into N scenes with 3-4 key highlights
-app.post("/api/breakdown-scenes", (req, res) => {
+// Route: Analyze script and break down into N scenes with 3-4 calculated key highlights
+app.post("/api/breakdown-scenes", async (req, res) => {
   try {
-    const { text, targetSceneCount } = req.body;
+    const { text, targetSceneCount, customFalToken } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ success: false, error: "Text script cannot be empty." });
     }
 
     const count = parseInt(targetSceneCount, 10) || 6;
-    const scenes = breakdownScriptIntoScenes(text, count);
+    const scenes = await breakdownScriptIntoScenesWithAI(text, count, customFalToken);
 
     return res.status(200).json({
       success: true,
@@ -1371,7 +1465,9 @@ app.post("/api/generate-video", upload.fields([
   { name: "bgFile", maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer, logoPosition, bgPresenterAlign, scenes: scenesRaw } = req.body;
+    const { audioFilename, avatarType, avatarPreset, avatarUrl, customToken, falToken, lipsyncProvider, lipsyncEngine, faceEnhancer, logoPosition, bgPresenterAlign, scenes: scenesRaw, draftMode: draftModeRaw } = req.body;
+    const draftMode = draftModeRaw === "true" || draftModeRaw === true;
+
     let scenes = [];
     if (scenesRaw) {
       try {
@@ -1384,31 +1480,34 @@ app.post("/api/generate-video", upload.fields([
     const runFaceEnhancer = faceEnhancer === "true" || faceEnhancer === true;
 
     const apiToken = customToken || process.env.REPLICATE_API_TOKEN;
-    if (provider === "replicate" && !apiToken) {
-      return res.status(400).json({
-        success: false,
-        error: "Replicate API Token is missing.",
-      });
-    }
-    if (runFaceEnhancer && provider === "replicate" && !apiToken) {
-      return res.status(400).json({
-        success: false,
-        error: "Replicate API Token is required to run GFPGAN Face Restoration. Please provide it in Developer Settings or configure REPLICATE_API_TOKEN.",
-      });
-    }
-
     const falApiKey = falToken || process.env.FAL_KEY;
-    if (provider === "fal" && !falApiKey) {
-      return res.status(400).json({
-        success: false,
-        error: "Fal.ai API key is missing. Please provide it in Developer Settings or configure FAL_KEY in Railway.",
-      });
-    }
-    if (runFaceEnhancer && provider === "fal" && !falApiKey) {
-      return res.status(400).json({
-        success: false,
-        error: "Fal.ai API Key is required to run Topaz Video AI Face Enhancement. Please provide it in Developer Settings or configure FAL_KEY.",
-      });
+
+    if (!draftMode) {
+      if (provider === "replicate" && !apiToken) {
+        return res.status(400).json({
+          success: false,
+          error: "Replicate API Token is missing.",
+        });
+      }
+      if (runFaceEnhancer && provider === "replicate" && !apiToken) {
+        return res.status(400).json({
+          success: false,
+          error: "Replicate API Token is required to run GFPGAN Face Restoration. Please provide it in Developer Settings or configure REPLICATE_API_TOKEN.",
+        });
+      }
+
+      if (provider === "fal" && !falApiKey) {
+        return res.status(400).json({
+          success: false,
+          error: "Fal.ai API key is missing. Please provide it in Developer Settings or configure FAL_KEY in Railway.",
+        });
+      }
+      if (runFaceEnhancer && provider === "fal" && !falApiKey) {
+        return res.status(400).json({
+          success: false,
+          error: "Fal.ai API Key is required to run Topaz Video AI Face Enhancement. Please provide it in Developer Settings or configure FAL_KEY.",
+        });
+      }
     }
 
     if (!audioFilename) {
@@ -1418,7 +1517,7 @@ app.post("/api/generate-video", upload.fields([
       });
     }
 
-    const replicate = new Replicate({ auth: apiToken });
+    const replicate = apiToken ? new Replicate({ auth: apiToken }) : null;
 
     // 1. Resolve Audio File input
     const localAudioPath = path.join("public", "uploads", audioFilename);
@@ -1517,19 +1616,21 @@ app.post("/api/generate-video", upload.fields([
 
     // Update history DB to reflect starting video generation stage
     db.addOrUpdate(dbJobId, {
-      lipsyncEngine: lipsyncEngine,
+      lipsyncEngine: draftMode ? "draft_preview" : lipsyncEngine,
       avatarType: avatarType,
       avatarPreset: avatarPreset || null,
-      status: "video_generating"
+      isDraft: draftMode,
+      status: draftMode ? "draft_generating" : "video_generating"
     });
 
     // Initialize job status
     jobs.set(jobId, {
       status: "processing",
-      step: "latentsync", // Start directly on the lip-sync step since audio is already generated!
-      progress: 60,
+      step: draftMode ? "draft_preview" : "latentsync",
+      progress: draftMode ? 40 : 60,
       audioUrl: `/uploads/${audioFilename}`,
       videoUrl: null,
+      isDraft: draftMode,
       error: null,
       logs: []
     });
@@ -1551,8 +1652,48 @@ app.post("/api/generate-video", upload.fields([
         let finalVideoInput;
         let videoUrl;
 
-        // Fal.ai Provider Branch
-        if (provider === "fal") {
+        // Draft Preview Mode (Zero Credits, Local FFmpeg Looped/Static Avatar)
+        if (draftMode) {
+          addJobLog(jobId, "⚡ Executing Free Instant Draft Preview (0 Credits)...");
+          const audioDuration = await getDuration(localAudioPath);
+
+          // 1. Resolve Local Video Source
+          let localVideoInputPath;
+          if (rawVideoPath.startsWith("http://") || rawVideoPath.startsWith("https://")) {
+            addJobLog(jobId, "Downloading remote avatar video locally to pre-process...");
+            const downloadedFilename = `downloaded_${jobId}.mp4`;
+            const downloadedPath = path.join("public", "uploads", downloadedFilename);
+            await downloadFile(rawVideoPath, downloadedPath);
+            tempFilesToCleanup.push(downloadedPath);
+            localVideoInputPath = downloadedPath;
+          } else {
+            localVideoInputPath = rawVideoPath;
+          }
+
+          // 2. Loop avatar to match audio duration
+          addJobLog(jobId, `Synchronizing avatar motion to audio duration (${audioDuration.toFixed(1)}s)...`);
+          const loopedVideoPath = await loopVideoIfNeeded(localVideoInputPath, audioDuration);
+          if (loopedVideoPath !== localVideoInputPath) {
+            tempFilesToCleanup.push(loopedVideoPath);
+          }
+
+          // 3. Format presenter video to 720p
+          const scaledVideoFilename = `scaled-${jobId}.mp4`;
+          const scaledVideoPath = path.join("public", "uploads", scaledVideoFilename);
+          addJobLog(jobId, "Formatting presenter video canvas...");
+          await execPromise(`ffmpeg -y -i "${loopedVideoPath}" -vf "scale='if(lt(iw,ih),720,-2)':'if(lt(iw,ih),-2,720)'" -c:v libx264 -pix_fmt yuv420p "${scaledVideoPath}"`);
+          tempFilesToCleanup.push(scaledVideoPath);
+
+          // 4. Mux local audio
+          const draftMuxFilename = `draft_mux_${jobId}.mp4`;
+          const draftMuxPath = path.join("public", "uploads", draftMuxFilename);
+          addJobLog(jobId, "Muxing audio track with looped avatar...");
+          await execPromise(`ffmpeg -y -i "${scaledVideoPath}" -i "${localAudioPath}" -c:v copy -c:a aac -shortest "${draftMuxPath}"`);
+          tempFilesToCleanup.push(draftMuxPath);
+
+          videoUrl = draftMuxPath;
+          addJobLog(jobId, "Draft avatar composition prepared. Applying scene cards and overlays...");
+        } else if (provider === "fal") {
           addJobLog(jobId, `Running Fal.ai pipeline...`);
           
           const falEndpoints = {
@@ -1849,12 +1990,14 @@ app.post("/api/generate-video", upload.fields([
           progress: 100,
           audioUrl: `/uploads/${audioFilename}`,
           videoUrl: videoUrl,
+          isDraft: draftMode,
           error: null
         });
 
         // Update history DB to reflect completed run
         db.addOrUpdate(dbJobId, {
           videoUrl: videoUrl,
+          isDraft: draftMode,
           status: "completed"
         });
 

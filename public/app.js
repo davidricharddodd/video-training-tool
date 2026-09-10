@@ -75,6 +75,42 @@ document.addEventListener("DOMContentLoaded", () => {
   const consoleLogs = document.getElementById("consoleLogs");
   const clearLogsBtn = document.getElementById("clearLogsBtn");
 
+  // Draft Preview Mode controls
+  const draftModeToggle = document.getElementById("draftModeToggle");
+  const generateVideoBtnText = document.getElementById("generateVideoBtnText");
+  const draftSuccessBanner = document.getElementById("draftSuccessBanner");
+  const proceedToFinalBtn = document.getElementById("proceedToFinalBtn");
+
+  function updateDraftModeUI() {
+    if (!draftModeToggle) return;
+    const isDraft = draftModeToggle.checked;
+    if (generateVideoBtnText) {
+      generateVideoBtnText.textContent = isDraft
+        ? "⚡ Generate Free Draft Preview (~3s)"
+        : "🎬 Render Complete Training Video";
+    }
+    if (summaryEngineLabel) {
+      summaryEngineLabel.textContent = isDraft
+        ? "Draft Mode (Looped Avatar - 0 Credits)"
+        : (lipsyncEngine && lipsyncEngine.options[lipsyncEngine.selectedIndex] ? lipsyncEngine.options[lipsyncEngine.selectedIndex].text : "Fal.ai Sync Labs");
+    }
+  }
+
+  if (draftModeToggle) {
+    draftModeToggle.addEventListener("change", updateDraftModeUI);
+    updateDraftModeUI();
+  }
+
+  if (proceedToFinalBtn) {
+    proceedToFinalBtn.addEventListener("click", () => {
+      if (draftModeToggle) {
+        draftModeToggle.checked = false;
+        updateDraftModeUI();
+      }
+      generateVideoBtn.click();
+    });
+  }
+
   // Tab Navigation Manager
   const tabBtns = document.querySelectorAll(".wizard-tab-btn");
   const tabContents = document.querySelectorAll(".tab-content");
@@ -134,13 +170,17 @@ document.addEventListener("DOMContentLoaded", () => {
     analyzeScriptBtn.disabled = true;
     analyzeScriptBtn.innerHTML = `<span>⏳ Analyzing script into ${targetSceneCount.value} scenes...</span>`;
 
+    const falTokenInput = document.getElementById("falToken");
+    const customFalToken = falTokenInput ? falTokenInput.value.trim() : (localStorage.getItem("fal_token") || "");
+
     try {
       const response = await fetch("/api/breakdown-scenes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: rawText,
-          targetSceneCount: targetSceneCount.value
+          targetSceneCount: targetSceneCount.value,
+          customFalToken: customFalToken
         })
       });
 
@@ -758,8 +798,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const faceEnhancer = document.getElementById("faceEnhancer").checked;
 
     const submittedAvatarType = avatarType === "generate" ? "url" : avatarType;
+    const isDraft = draftModeToggle ? draftModeToggle.checked : false;
 
     const formData = new FormData();
+    formData.append("draftMode", isDraft);
     formData.append("audioFilename", generatedAudioFilename);
     formData.append("avatarType", submittedAvatarType);
     formData.append("lipsyncProvider", provider);
@@ -805,11 +847,11 @@ document.addEventListener("DOMContentLoaded", () => {
     loadingState.classList.remove("hidden");
     videoSpinner.classList.remove("hidden");
 
-    currentStepTitle.textContent = "Synthesizing Lip-Sync Video...";
-    currentStepDetail.textContent = "Processing presenter video and overlays...";
-    progressBar.style.width = "20%";
+    currentStepTitle.textContent = isDraft ? "Generating Free Draft Preview..." : "Synthesizing Lip-Sync Video...";
+    currentStepDetail.textContent = isDraft ? "Looping presenter and rendering synchronized slide bullet overlays..." : "Processing presenter video and overlays...";
+    progressBar.style.width = isDraft ? "40%" : "20%";
 
-    logMessage("Step 4: Dispatching video synthesis request...");
+    logMessage(isDraft ? "Step 4: Dispatching free draft preview request (0 Credits)..." : "Step 4: Dispatching video synthesis request...");
 
     try {
       const response = await fetch("/api/generate-video", {
@@ -861,7 +903,14 @@ document.addEventListener("DOMContentLoaded", () => {
               downloadAudioBtn.href = `/uploads/${generatedAudioFilename}`;
             }
 
-            logMessage(`Video processing complete! Output URL: ${job.videoUrl}`, "success");
+            if (job.isDraft) {
+              if (draftSuccessBanner) draftSuccessBanner.classList.remove("hidden");
+              logMessage(`Draft Preview complete! Slide timings and text overlays verified (0 credits used).`, "success");
+            } else {
+              if (draftSuccessBanner) draftSuccessBanner.classList.add("hidden");
+              logMessage(`Video processing complete! Output URL: ${job.videoUrl}`, "success");
+            }
+
             loadHistory();
 
           } else if (job.status === "failed") {
@@ -998,7 +1047,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         let statusBadge = `<span class="px-2 py-0.5 bg-amber-950/60 text-amber-400 border border-amber-800 rounded text-[10px]">Audio Preview</span>`;
         if (item.videoUrl) {
-          statusBadge = `<span class="px-2 py-0.5 bg-emerald-950/60 text-emerald-400 border border-emerald-800 rounded text-[10px]">Video Complete</span>`;
+          statusBadge = item.isDraft
+            ? `<span class="px-2 py-0.5 bg-violet-950/60 text-violet-400 border border-violet-800 rounded text-[10px]">⚡ Draft Preview</span>`
+            : `<span class="px-2 py-0.5 bg-emerald-950/60 text-emerald-400 border border-emerald-800 rounded text-[10px]">Video Complete</span>`;
         }
 
         itemDiv.innerHTML = `
