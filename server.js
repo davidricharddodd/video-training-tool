@@ -1498,19 +1498,28 @@ app.post("/api/generate-video", upload.fields([
 
                 addJobLog(jobId, `Dispatching segment ${i + 1}/${numSegments} (${duration.toFixed(1)}s) to ${endpointId}...`);
 
-                const segInput = { audio_url: publicSegAudioUrl };
-                if (endpointId.includes("wav2lip")) {
-                  segInput.face_url = publicSegVideoUrl;
-                } else if (endpointId.includes("latentsync")) {
-                  segInput.video_url = publicSegVideoUrl;
-                  segInput.loop_mode = "loop";
-                } else {
-                  segInput.video_url = publicSegVideoUrl;
-                  segInput.sync_mode = "loop";
+                const buildSegInput = (ep, vUrl, aUrl) => {
+                  const inp = { audio_url: aUrl };
+                  if (ep.includes("wav2lip"))        inp.face_url = vUrl;
+                  else if (ep.includes("latentsync")) { inp.video_url = vUrl; inp.loop_mode = "loop"; }
+                  else                               { inp.video_url = vUrl; inp.sync_mode = "loop"; }
+                  return inp;
+                };
+
+                let result;
+                try {
+                  const queueInfo = await startFalPrediction(endpointId, buildSegInput(endpointId, publicSegVideoUrl, publicSegAudioUrl), falApiKey);
+                  result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+                } catch (err) {
+                  const isDownstream = err.message.includes("downstream_service_unavailable") || err.message.includes("504");
+                  if (isDownstream && !endpointId.includes("latentsync")) {
+                    const fallbackEp = falEndpoints.fal_latentsync;
+                    addJobLog(jobId, `⚠️ Segment ${i + 1}: ${endpointId} unavailable. Falling back to LatentSync...`);
+                    const queueInfo = await startFalPrediction(fallbackEp, buildSegInput(fallbackEp, publicSegVideoUrl, publicSegAudioUrl), falApiKey);
+                    result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+                  } else { throw err; }
                 }
 
-                const queueInfo = await startFalPrediction(endpointId, segInput, falApiKey);
-                const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
                 const outUrl = result.video ? result.video.url : (result.output_video ? result.output_video.url : result.output);
                 if (!outUrl) throw new Error(`Segment ${i + 1} prediction did not return a valid video URL.`);
 
@@ -1546,25 +1555,35 @@ app.post("/api/generate-video", upload.fields([
 
           } else {
             // Standard single-run prediction (audio <= 58s)
-             addJobLog(jobId, `Running single Fal.ai prediction using model ${endpointId}...`);
-             const falInput = { audio_url: publicAudioUrl };
-             if (endpointId.includes("wav2lip")) {
-               falInput.face_url = publicVideoUrl;
-             } else if (endpointId.includes("latentsync")) {
-               falInput.video_url = publicVideoUrl;
-               falInput.loop_mode = "loop";
-             } else {
-               falInput.video_url = publicVideoUrl;
-               falInput.sync_mode = "loop";
-             }
-             const queueInfo = await startFalPrediction(
-               endpointId,
-               falInput,
-               falApiKey
-             );
-             const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
-             videoUrl = result.video ? result.video.url : result.output;
-             addJobLog(jobId, `Fal.ai run complete. Video URL: ${videoUrl}`);
+            addJobLog(jobId, `Running single Fal.ai prediction using model ${endpointId}...`);
+
+            const buildFalInput = (ep, videoUrl, audioUrl) => {
+              const input = { audio_url: audioUrl };
+              if (ep.includes("wav2lip"))       input.face_url = videoUrl;
+              else if (ep.includes("latentsync")) { input.video_url = videoUrl; input.loop_mode = "loop"; }
+              else                              { input.video_url = videoUrl; input.sync_mode = "loop"; }
+              return input;
+            };
+
+            const runWithFallback = async (primaryEndpoint) => {
+              try {
+                const queueInfo = await startFalPrediction(primaryEndpoint, buildFalInput(primaryEndpoint, publicVideoUrl, publicAudioUrl), falApiKey);
+                return await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+              } catch (err) {
+                const isDownstream = err.message.includes("downstream_service_unavailable") || err.message.includes("504");
+                if (isDownstream && !primaryEndpoint.includes("latentsync")) {
+                  const fallbackEp = falEndpoints.fal_latentsync;
+                  addJobLog(jobId, `⚠️ ${primaryEndpoint} unavailable (downstream error). Auto-switching to LatentSync fallback...`);
+                  const queueInfo = await startFalPrediction(fallbackEp, buildFalInput(fallbackEp, publicVideoUrl, publicAudioUrl), falApiKey);
+                  return await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+                }
+                throw err;
+              }
+            };
+
+            const result = await runWithFallback(endpointId);
+            videoUrl = result.video ? result.video.url : (result.output_video ? result.output_video.url : result.output);
+            addJobLog(jobId, `Fal.ai run complete. Video URL: ${videoUrl}`);
           }
 
 

@@ -402,8 +402,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (provider === "fal") {
       const engines = [
-        { value: "fal_sync_labs",   label: "Sync Labs Lipsync-2 Pro — ~$0.08/min · Best Quality" },
-        { value: "fal_latentsync",  label: "LatentSync — ~$0.02/min · Natural Expression" },
+        { value: "fal_latentsync",  label: "LatentSync — ~$0.02/min · Reliable · Natural Expression" },
+        { value: "fal_sync_labs",   label: "Sync Labs Lipsync-2 Pro — ~$0.08/min · Best Quality (may be unavailable)" },
         { value: "fal_wav2lip",     label: "Wav2Lip — ~$0.01/min · Fastest / Cheapest" }
       ];
       engines.forEach(eng => {
