@@ -212,13 +212,46 @@ document.addEventListener("DOMContentLoaded", () => {
     sceneCountLabel.textContent = `${scenes.length} Scenes Active`;
     scenesContainer.classList.remove("hidden");
 
+    const formatTime = (sec) => {
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
+    // Calculate speech duration per scene (approx. 2.45 words/sec + pauses)
+    const sceneDurations = scenes.map(s => {
+      const text = (s.script || "").replace(/\[pause[^\]]*\]/gi, " ");
+      const words = text.trim().split(/\s+/).filter(Boolean).length;
+      let pauseSec = 0;
+      const pauseMatches = (s.script || "").matchAll(/\[pause(?:\s*:\s*|\s+)?(\d+(?:\.\d+)?)?\s*s?\]/gi);
+      for (const m of pauseMatches) {
+        pauseSec += m[1] ? parseFloat(m[1]) : 1.0;
+      }
+      return Math.max(3.0, (words / 2.45) + pauseSec);
+    });
+
+    let cumulativeSec = 0;
+
     scenes.forEach((scene, index) => {
       const card = document.createElement("div");
       card.className = "bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner relative group";
 
-      const highlightsHtml = (scene.highlights || []).map((hl, hIdx) => `
+      const sceneDur = sceneDurations[index];
+      const startStr = formatTime(cumulativeSec);
+      const endStr = formatTime(cumulativeSec + sceneDur);
+      const sceneStartSec = cumulativeSec;
+      cumulativeSec += sceneDur;
+
+      const highlights = scene.highlights || [];
+      const leadTime = Math.min(1.0, sceneDur * 0.15);
+      const availDur = Math.max(1.0, sceneDur - leadTime);
+
+      const highlightsHtml = highlights.map((hl, hIdx) => {
+        const offsetSec = leadTime + (hIdx * (availDur / Math.max(1, highlights.length)));
+        const revealTimeStr = formatTime(sceneStartSec + offsetSec);
+        return `
         <div class="flex items-center space-x-2 group/item">
-          <span class="h-2 w-2 rounded-full bg-violet-400 flex-shrink-0"></span>
+          <span class="text-[9px] font-mono text-violet-400 bg-violet-950/70 border border-violet-800/60 px-1.5 py-0.5 rounded flex-shrink-0" title="Bullet reveals in video at ${revealTimeStr}">⏱️ ${revealTimeStr}</span>
           <input type="text" value="${hl.replace(/"/g, '&quot;')}" data-scene="${index}" data-highlight="${hIdx}"
             class="scene-highlight-input w-full px-2.5 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 focus:border-violet-500 focus:outline-none transition-all" />
           <button type="button" class="delete-highlight-btn text-slate-500 hover:text-rose-400 p-1 text-xs rounded transition-all cursor-pointer"
@@ -226,14 +259,16 @@ document.addEventListener("DOMContentLoaded", () => {
             ✕
           </button>
         </div>
-      `).join("");
+      `;
+      }).join("");
 
       card.innerHTML = `
         <div class="flex items-center justify-between border-b border-slate-850 pb-2 gap-2">
           <div class="flex items-center space-x-2 flex-1 min-w-0">
             <span class="text-[10px] bg-violet-950/60 text-violet-300 px-2 py-0.5 rounded border border-violet-800 font-semibold flex-shrink-0">Scene ${index + 1}</span>
+            <span class="text-[10px] bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-medium flex-shrink-0">⏱️ ${startStr} - ${endStr}</span>
             <input type="text" value="${scene.title.replace(/"/g, '&quot;')}" data-scene="${index}" field="title"
-              class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full" />
+              class="scene-title-input font-semibold text-xs text-violet-300 bg-transparent border-none focus:outline-none w-full truncate" />
           </div>
           <button type="button" class="delete-scene-btn text-slate-500 hover:text-rose-400 p-1 text-xs rounded transition-all cursor-pointer flex-shrink-0"
             data-scene="${index}" title="Delete Scene ${index + 1}">
@@ -247,7 +282,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         <div>
           <div class="flex items-center justify-between mb-1.5">
-            <label class="block text-[9px] uppercase font-semibold text-slate-500">On-Screen Key Highlights</label>
+            <label class="block text-[9px] uppercase font-semibold text-slate-500">On-Screen Key Highlights (Speech-Synced)</label>
             <button type="button" class="add-highlight-btn text-[10px] text-violet-400 hover:text-violet-300 font-semibold flex items-center space-x-0.5 transition-all cursor-pointer"
               data-scene="${index}">
               <span>+ Add Bullet</span>
@@ -645,7 +680,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let generatedAudioFilename = null;
 
   // Helper to activate an audio track (either newly generated or loaded from history)
-  function selectActiveAudio(audioUrl, filename, textSnippet) {
+  function selectActiveAudio(audioUrl, filename, textSnippet, scenesData = null) {
     if (!audioUrl) return;
     const cleanFilename = filename || audioUrl.split("/").pop();
     generatedAudioFilename = cleanFilename;
@@ -654,8 +689,12 @@ document.addEventListener("DOMContentLoaded", () => {
     videoActionContainer.classList.remove("hidden");
     if (downloadAudioBtn) downloadAudioBtn.href = audioUrl;
     
-    // If text snippet provided and scriptText is empty, populate it
-    if (textSnippet && (!scriptText.value || !scriptText.value.trim())) {
+    if (scenesData && Array.isArray(scenesData) && scenesData.length > 0) {
+      currentScenes = scenesData;
+      renderSceneCards(currentScenes);
+      scriptText.value = currentScenes.map(s => s.script).join("\n\n");
+      logMessage(`Restored ${currentScenes.length} synchronized scenes for this audio track.`, "success");
+    } else if (textSnippet) {
       scriptText.value = textSnippet;
     }
 
@@ -670,14 +709,24 @@ document.addEventListener("DOMContentLoaded", () => {
         alert("Please choose a previous audio track from the dropdown first.");
         return;
       }
-      selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"));
-      alert("Previous audio track loaded! You can now continue to Step 3 to select presenter & generate video.");
+      const scenesAttr = selectedOpt.getAttribute("data-scenes");
+      let parsedScenes = null;
+      if (scenesAttr) {
+        try { parsedScenes = JSON.parse(decodeURIComponent(scenesAttr)); } catch(e){}
+      }
+      selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"), parsedScenes);
+      alert("Previous audio track loaded with matching scenes! You can now continue to Step 3 to select presenter & generate video.");
     });
 
     previousAudioSelect.addEventListener("change", () => {
       const selectedOpt = previousAudioSelect.options[previousAudioSelect.selectedIndex];
       if (selectedOpt && selectedOpt.value) {
-        selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"));
+        const scenesAttr = selectedOpt.getAttribute("data-scenes");
+        let parsedScenes = null;
+        if (scenesAttr) {
+          try { parsedScenes = JSON.parse(decodeURIComponent(scenesAttr)); } catch(e){}
+        }
+        selectActiveAudio(selectedOpt.value, null, selectedOpt.getAttribute("data-text"), parsedScenes);
       }
     });
   }
@@ -692,8 +741,15 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const audioUrl = selectedOpt.value;
       const text = selectedOpt.getAttribute("data-text") || "";
-      selectActiveAudio(audioUrl, null, text);
-      if (text) {
+      const scenesAttr = selectedOpt.getAttribute("data-scenes");
+      let parsedScenes = null;
+      if (scenesAttr) {
+        try { parsedScenes = JSON.parse(decodeURIComponent(scenesAttr)); } catch(e){}
+      }
+      selectActiveAudio(audioUrl, null, text, parsedScenes);
+      if (parsedScenes && parsedScenes.length > 0) {
+        logMessage(`Loaded audio track and restored ${parsedScenes.length} synchronized scenes!`, "success");
+      } else if (text) {
         scriptText.value = text;
         analyzeScriptBtn.click(); // Auto-generates scene cards for immediate editing!
         logMessage(`Loaded audio track and auto-generated scenes for editing.`, "success");
@@ -712,7 +768,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const audioUrl = selectedOpt.value;
       const text = selectedOpt.getAttribute("data-text") || "";
-      selectActiveAudio(audioUrl, null, text);
+      const scenesAttr = selectedOpt.getAttribute("data-scenes");
+      let parsedScenes = null;
+      if (scenesAttr) {
+        try { parsedScenes = JSON.parse(decodeURIComponent(scenesAttr)); } catch(e){}
+      }
+      selectActiveAudio(audioUrl, null, text, parsedScenes);
       switchTab(3); // Jump straight to Step 3: Video & Presenter!
       logMessage("Audio loaded! Jumped directly to Step 3. Pick your presenter and generate video.", "info");
     });
@@ -720,7 +781,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Step 2: Generate Audio Preview
   generateAudioBtn.addEventListener("click", async () => {
-    const text = scriptText.value;
+    let text = scriptText.value;
+    if (currentScenes && currentScenes.length > 0) {
+      text = currentScenes.map(s => s.script).join("\n\n");
+      scriptText.value = text;
+    }
     const voice = voiceSelect.value;
     const customToken = document.getElementById("customToken").value;
     const falToken = document.getElementById("falToken").value;
@@ -752,7 +817,8 @@ document.addEventListener("DOMContentLoaded", () => {
           customToken, 
           customFalToken: falToken, 
           customDeepgramToken: deepgramToken,
-          lipsyncProvider: lipsyncProvider.value 
+          lipsyncProvider: lipsyncProvider.value,
+          scenes: currentScenes && currentScenes.length > 0 ? JSON.stringify(currentScenes) : null
         })
       });
 
@@ -761,7 +827,7 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(data.error || "Failed to generate audio.");
       }
 
-      selectActiveAudio(data.audioUrl, data.filename, text);
+      selectActiveAudio(data.audioUrl, data.filename, text, currentScenes);
 
       let pauseReport = "";
       if (data.pauseCount > 0) {
@@ -1024,7 +1090,8 @@ document.addEventListener("DOMContentLoaded", () => {
       audioItems.forEach(item => {
         const snippet = (item.text || "").replace(/"/g, '&quot;');
         const shortText = item.text && item.text.length > 42 ? item.text.substring(0, 42) + "..." : (item.text || "Audio Track");
-        audioOptions.push(`<option value="${item.audioUrl}" data-text="${snippet}">${formatHistoryDate(item)} — "${shortText}"</option>`);
+        const encodedScenes = encodeURIComponent(JSON.stringify(item.scenes || []));
+        audioOptions.push(`<option value="${item.audioUrl}" data-text="${snippet}" data-scenes="${encodedScenes}">${formatHistoryDate(item)} — "${shortText}"</option>`);
       });
       const optionsHtml = audioOptions.join("");
       if (previousAudioSelect) previousAudioSelect.innerHTML = optionsHtml;
@@ -1044,6 +1111,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         const dateStr = formatHistoryDate(item);
         const textSnippet = item.text && item.text.length > 60 ? item.text.substring(0, 60) + "..." : (item.text || "Audio track");
+        const encodedScenes = encodeURIComponent(JSON.stringify(item.scenes || []));
 
         let statusBadge = `<span class="px-2 py-0.5 bg-amber-950/60 text-amber-400 border border-amber-800 rounded text-[10px]">Audio Preview</span>`;
         if (item.videoUrl) {
@@ -1065,7 +1133,7 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
             ${item.audioUrl ? `
               <button type="button" class="use-audio-btn px-2 py-0.5 bg-violet-950/80 hover:bg-violet-900 border border-violet-800/80 text-violet-300 hover:text-white rounded text-[10px] font-semibold transition-all cursor-pointer"
-                data-audio="${item.audioUrl}" data-text="${(item.text || '').replace(/"/g, '&quot;')}">
+                data-audio="${item.audioUrl}" data-text="${(item.text || '').replace(/"/g, '&quot;')}" data-scenes="${encodedScenes}">
                 ⚡ Use Audio
               </button>
             ` : ''}
@@ -1079,9 +1147,14 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.addEventListener("click", () => {
           const audioUrl = btn.getAttribute("data-audio");
           const text = btn.getAttribute("data-text");
-          selectActiveAudio(audioUrl, null, text);
+          const scenesAttr = btn.getAttribute("data-scenes");
+          let parsedScenes = null;
+          if (scenesAttr) {
+            try { parsedScenes = JSON.parse(decodeURIComponent(scenesAttr)); } catch (e) {}
+          }
+          selectActiveAudio(audioUrl, null, text, parsedScenes);
           switchTab(3); // Navigate user directly to Presenter selection!
-          logMessage("Loaded previous audio! Choose your presenter in Step 3 and generate.", "info");
+          logMessage("Loaded previous audio & restored synchronized scenes! Choose your presenter in Step 3.", "info");
         });
       });
 

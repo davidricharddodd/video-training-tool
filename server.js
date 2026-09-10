@@ -8,6 +8,7 @@ import { promisify } from "util";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import sharp from "sharp";
 
 const execPromise = promisify(exec);
 
@@ -226,7 +227,7 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
       bgInputIdx = nextInputIdx++;
       filterParts.push(`[${bgInputIdx}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080[bg_canvas]`);
     } else {
-      const bgSvgPath = path.join(tempOutputDir, `bg_canvas_${Date.now()}.svg`);
+      const bgPngPath = path.join(tempOutputDir, `bg_canvas_${Date.now()}.png`);
       const bgSvgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">
         <defs>
           <linearGradient id="corpBg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -237,9 +238,9 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
         </defs>
         <rect width="1920" height="1080" fill="url(#corpBg)"/>
       </svg>`;
-      fs.writeFileSync(bgSvgPath, bgSvgContent);
-      tempFiles.push(bgSvgPath);
-      inputs.push(`-i "${bgSvgPath}"`);
+      await sharp(Buffer.from(bgSvgContent)).png().toFile(bgPngPath);
+      tempFiles.push(bgPngPath);
+      inputs.push(`-i "${bgPngPath}"`);
       bgInputIdx = nextInputIdx++;
       filterParts.push(`[${bgInputIdx}:v]scale=1920:1080[bg_canvas]`);
     }
@@ -247,14 +248,14 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
     // 2. Generate Rounded Corner Alpha Mask for Presenter Video Box (Width: 700px, Height: 940px, Radius: 32px)
     const presenterWidth = 700;
     const presenterHeight = 940;
-    const maskSvgPath = path.join(tempOutputDir, `presenter_mask_${Date.now()}.svg`);
+    const maskPngPath = path.join(tempOutputDir, `presenter_mask_${Date.now()}.png`);
     const maskSvgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${presenterWidth}" height="${presenterHeight}">
       <rect x="0" y="0" width="${presenterWidth}" height="${presenterHeight}" rx="32" ry="32" fill="white"/>
     </svg>`;
-    fs.writeFileSync(maskSvgPath, maskSvgContent);
-    tempFiles.push(maskSvgPath);
+    await sharp(Buffer.from(maskSvgContent)).png().toFile(maskPngPath);
+    tempFiles.push(maskPngPath);
 
-    inputs.push(`-i "${maskSvgPath}"`);
+    inputs.push(`-i "${maskPngPath}"`);
     const maskInputIdx = nextInputIdx++;
 
     // Scale & Crop Presenter Video to 700x940 (offset crop vertically for portrait videos so head & face are preserved)
@@ -270,7 +271,7 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
     filterParts.push(`[bg_canvas][fg_rounded]overlay=x=${xPos}:y=70[v_comp]`);
     currentStream = "v_comp";
 
-    // 3. Add Scene Highlight Overlays if scenes are provided (proportional to spoken words & pauses)
+    // 3. Add Scene Highlight Overlays with Progressive Bullet Reveals (Speech-Synchronized)
     if (scenes && scenes.length > 0) {
       const totalDur = parseFloat(audioDuration) || 60;
 
@@ -284,36 +285,98 @@ async function applySceneOverlaysAndBranding(inputVideoPath, bgPath, bgPresenter
         for (const m of pauseMatches) {
           pauseSec += m[1] ? parseFloat(m[1]) : 1.0;
         }
-        // Baseline 2.5 words per second speaking rate
         return Math.max(3, words + (pauseSec * 2.5));
       });
 
       const totalWeight = sceneWeights.reduce((a, b) => a + b, 0);
       let cumulativeTime = 0;
+      let progressiveStageCount = 0;
 
-      console.log(`[Scene Overlay] Calculating speech-synchronized timing for ${scenes.length} scenes (Total Audio: ${totalDur.toFixed(1)}s)...`);
+      console.log(`[Scene Overlay] Rendering speech-synchronized progressive reveals for ${scenes.length} scenes (Total Audio: ${totalDur.toFixed(1)}s)...`);
 
       for (let i = 0; i < scenes.length; i++) {
         const scene = scenes[i];
-        const svgContent = generateSceneOverlaySvg(scene.highlights, scene.title, scene.sceneIndex || (i + 1));
-        const svgPath = path.join(tempOutputDir, `scene_overlay_${Date.now()}_${i}.svg`);
-        fs.writeFileSync(svgPath, svgContent);
-        tempFiles.push(svgPath);
-
-        inputs.push(`-i "${svgPath}"`);
-        const overlayIdx = nextInputIdx++;
-
         const isLast = (i === scenes.length - 1);
         const thisSceneDuration = (sceneWeights[i] / totalWeight) * totalDur;
-        const startTime = cumulativeTime.toFixed(2);
-        const endTime = isLast ? totalDur.toFixed(2) : (cumulativeTime + thisSceneDuration).toFixed(2);
+        const sceneStart = cumulativeTime;
+        const sceneEnd = isLast ? totalDur : (cumulativeTime + thisSceneDuration);
         cumulativeTime += thisSceneDuration;
 
-        console.log(`[Scene Overlay] Scene ${i + 1} ("${(scene.title || '').substring(0, 30)}..."): ${startTime}s -> ${endTime}s (${thisSceneDuration.toFixed(1)}s)`);
+        const highlights = (scene.highlights || []).slice(0, 4);
+        const cleanScript = (scene.script || "").replace(/\[pause[^\]]*\]/gi, " ").trim();
+        const sentences = cleanScript.split(/[\.\!\?\n]+/).map(s => s.trim()).filter(Boolean);
 
-        const outStreamName = `v_scene_${i}`;
-        filterParts.push(`[${currentStream}][${overlayIdx}:v]overlay=0:0:enable='between(t,${startTime},${endTime})'[${outStreamName}]`);
-        currentStream = outStreamName;
+        // Calculate progressive reveal timestamps within this scene
+        const leadTime = Math.min(1.0, thisSceneDuration * 0.15); // Lead time for title card to establish
+        const availableDuration = Math.max(1.0, thisSceneDuration - leadTime);
+        const revealOffsets = [];
+
+        if (sentences.length >= highlights.length && highlights.length > 0) {
+          const sentenceWordCounts = sentences.slice(0, highlights.length).map(s => s.split(/\s+/).filter(Boolean).length);
+          const totalWords = sentenceWordCounts.reduce((a, b) => a + b, 0) || 1;
+          let currOffset = leadTime;
+          for (let k = 0; k < highlights.length; k++) {
+            revealOffsets.push(currOffset);
+            currOffset += (sentenceWordCounts[k] / totalWords) * availableDuration;
+          }
+        } else if (highlights.length > 0) {
+          for (let k = 0; k < highlights.length; k++) {
+            revealOffsets.push(leadTime + (k * (availableDuration / highlights.length)));
+          }
+        }
+
+        // Build progressive display stages for this scene
+        const stages = [];
+        if (highlights.length === 0 || revealOffsets.length === 0) {
+          stages.push({
+            start: sceneStart,
+            end: sceneEnd,
+            visibleCount: 0,
+            activeIndex: -1
+          });
+        } else {
+          // Stage 0: Title card only before first bullet reveal
+          const firstReveal = sceneStart + revealOffsets[0];
+          if (firstReveal > sceneStart + 0.3) {
+            stages.push({
+              start: sceneStart,
+              end: firstReveal,
+              visibleCount: 0,
+              activeIndex: -1
+            });
+          }
+          // Progressive bullet reveals
+          for (let k = 0; k < highlights.length; k++) {
+            const stageStart = (k === 0 && stages.length === 0) ? sceneStart : (sceneStart + revealOffsets[k]);
+            const stageEnd = (k === highlights.length - 1) ? sceneEnd : (sceneStart + revealOffsets[k + 1]);
+            stages.push({
+              start: stageStart,
+              end: stageEnd,
+              visibleCount: k + 1,
+              activeIndex: k
+            });
+          }
+        }
+
+        // Render each stage to a transparent PNG and add to FFmpeg overlay filter graph
+        for (const stage of stages) {
+          const svgContent = generateSceneOverlaySvg(highlights, scene.title, scene.sceneIndex || (i + 1), stage.visibleCount, stage.activeIndex);
+          const pngFilename = `prog_overlay_${Date.now()}_${progressiveStageCount++}.png`;
+          const pngPath = path.join(tempOutputDir, pngFilename);
+          await sharp(Buffer.from(svgContent)).png().toFile(pngPath);
+          tempFiles.push(pngPath);
+
+          inputs.push(`-i "${pngPath}"`);
+          const overlayIdx = nextInputIdx++;
+          const outStreamName = `v_prog_${progressiveStageCount}`;
+          
+          const sStart = stage.start.toFixed(2);
+          const sEnd = stage.end.toFixed(2);
+          filterParts.push(`[${currentStream}][${overlayIdx}:v]overlay=0:0:enable='between(t,${sStart},${sEnd})'[${outStreamName}]`);
+          currentStream = outStreamName;
+        }
+
+        console.log(`[Scene Overlay] Scene ${i + 1} ("${(scene.title || '').substring(0, 25)}..."): ${sceneStart.toFixed(1)}s -> ${sceneEnd.toFixed(1)}s with ${stages.length} progressive bullet reveals.`);
       }
     }
 
@@ -830,21 +893,34 @@ Respond with ONLY valid JSON:
   return breakdownScriptIntoScenes(rawText, targetCount);
 }
 
-// Helper to generate a clean, modern SVG slide overlay card with 3-4 bullet points
-function generateSceneOverlaySvg(highlights, title, sceneIndex) {
+// Helper to generate a clean, modern SVG slide overlay card with progressive bullet point reveals
+function generateSceneOverlaySvg(highlights, title, sceneIndex, visibleCount = 99, activeIndex = -1) {
   const rawTitle = title || `Scene ${sceneIndex}`;
   const cleanTitle = rawTitle.replace(/^Scene \d+:\s*/i, "").trim();
   const safeTitle = cleanTitle.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   
-  const bulletLines = (highlights || []).slice(0, 4).map((h, i) => {
+  const allHighlights = (highlights || []).slice(0, 4);
+  const bulletLines = allHighlights.map((h, i) => {
+    const isVisible = i < visibleCount;
+    if (!isVisible) return "";
+
+    const isActive = (i === activeIndex || (activeIndex === -1 && i === visibleCount - 1));
     const yText = 430 + (i * 90);
     const yDot = yText - 8;
     const safeH = String(h).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const dotColor = isActive ? "#c084fc" : "#8b5cf6";
+    const dotRadius = isActive ? "10" : "7";
+    const textColor = isActive ? "#ffffff" : "#e2e8f0";
+    const textWeight = isActive ? "700" : "600";
+    const pulseRing = isActive ? `<circle cx="92" cy="${yDot}" r="15" fill="#c084fc" fill-opacity="0.35" stroke="#d946ef" stroke-width="1.5" />` : "";
+
     return `
-    <circle cx="92" cy="${yDot}" r="8" fill="#8b5cf6" />
-    <text x="118" y="${yText}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" font-weight="600" fill="#f8fafc">${safeH}</text>
+    ${pulseRing}
+    <circle cx="92" cy="${yDot}" r="${dotRadius}" fill="${dotColor}" />
+    <text x="122" y="${yText}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" font-weight="${textWeight}" fill="${textColor}">${safeH}</text>
     `;
-  }).join("\n");
+  }).filter(Boolean).join("\n");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
   <defs>
@@ -852,18 +928,23 @@ function generateSceneOverlaySvg(highlights, title, sceneIndex) {
       <stop offset="0%" stop-color="#8b5cf6"/>
       <stop offset="100%" stop-color="#d946ef"/>
     </linearGradient>
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
   </defs>
 
-  <!-- Left-Side Scene Card Content -->
+  <!-- Left-Side Slide Card Container Backdrop (Glassmorphic) -->
+  <rect x="50" y="190" width="1040" height="660" rx="28" fill="#0b132b" fill-opacity="0.75" stroke="#334155" stroke-width="1.5" filter="url(#cardShadow)"/>
+
   <!-- Scene Badge -->
-  <rect x="80" y="240" width="120" height="32" rx="8" fill="#7c3aed" fill-opacity="0.35" stroke="#8b5cf6" stroke-width="1.5"/>
-  <text x="140" y="261" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="bold" fill="#ddd6fe" text-anchor="middle" letter-spacing="1">SCENE ${sceneIndex}</text>
+  <rect x="80" y="235" width="125" height="32" rx="8" fill="#7c3aed" fill-opacity="0.35" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="142" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="bold" fill="#ddd6fe" text-anchor="middle" letter-spacing="1">SCENE ${sceneIndex}</text>
 
   <!-- Scene Title Headline -->
-  <text x="80" y="335" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40" font-weight="bold" fill="#ffffff">${safeTitle}</text>
-  <rect x="80" y="360" width="220" height="6" rx="3" fill="url(#titleAccent)"/>
+  <text x="80" y="325" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="36" font-weight="bold" fill="#ffffff">${safeTitle}</text>
+  <rect x="80" y="348" width="220" height="5" rx="2.5" fill="url(#titleAccent)"/>
 
-  <!-- On-Screen Key Bullet Highlights -->
+  <!-- Progressive On-Screen Key Bullet Highlights -->
   ${bulletLines}
 </svg>`;
 }
@@ -987,7 +1068,13 @@ app.post("/api/generate-audio", async (req, res) => {
   let activeProvider = "replicate";
   try {
     console.log(`[Audio Generation Request] Received body:`, req.body);
-    const { text, voice, customToken, customFalToken, customDeepgramToken, lipsyncProvider } = req.body;
+    const { text, voice, customToken, customFalToken, customDeepgramToken, lipsyncProvider, scenes: scenesRaw } = req.body;
+    let scenes = null;
+    if (scenesRaw) {
+      try {
+        scenes = typeof scenesRaw === "string" ? JSON.parse(scenesRaw) : scenesRaw;
+      } catch (e) {}
+    }
 
     const isDeepgram = voice && voice.startsWith("aura-");
     let deepgramApiKey = "";
@@ -1071,6 +1158,7 @@ app.post("/api/generate-audio", async (req, res) => {
         text: text,
         voice: voice || "aura-asteria-en",
         audioUrl: `/uploads/${outputFilename}`,
+        scenes: scenes && scenes.length > 0 ? scenes : null,
         videoUrl: null,
         lipsyncEngine: null,
         avatarPreset: null,
@@ -1151,6 +1239,7 @@ app.post("/api/generate-audio", async (req, res) => {
       text: text,
       voice: voice || "aura-asteria-en",
       audioUrl: `/uploads/${outputFilename}`,
+      scenes: scenes && scenes.length > 0 ? scenes : null,
       videoUrl: null,
       lipsyncEngine: null,
       avatarPreset: null,
@@ -1619,6 +1708,7 @@ app.post("/api/generate-video", upload.fields([
       lipsyncEngine: draftMode ? "draft_preview" : lipsyncEngine,
       avatarType: avatarType,
       avatarPreset: avatarPreset || null,
+      scenes: scenes && scenes.length > 0 ? scenes : null,
       isDraft: draftMode,
       status: draftMode ? "draft_generating" : "video_generating"
     });
