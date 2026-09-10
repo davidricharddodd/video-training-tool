@@ -1416,12 +1416,13 @@ app.post("/api/generate-video", upload.fields([
           addJobLog(jobId, `Running Fal.ai pipeline...`);
           
           const falEndpoints = {
-            fal_kling: "fal-ai/kling-video/lipsync/audio-to-video",
-            fal_sync_lipsync_3: "fal-ai/sync-lipsync/v3",
-            fal_wav2lip: "fal-ai/wav2lip",
+            fal_kling:      "fal-ai/kling-video/lipsync/audio-to-video",
+            fal_sync_labs:  "fal-ai/sync-lipsync/v3",
+            fal_wav2lip:    "fal-ai/wav2lip",
             fal_latentsync: "fal-ai/latentsync"
           };
-          const endpointId = falEndpoints[lipsyncEngine] || falEndpoints.fal_kling;
+          const endpointId = falEndpoints[lipsyncEngine] || falEndpoints.fal_latentsync;
+          addJobLog(jobId, `Resolved fal endpoint: ${endpointId} for engine: ${lipsyncEngine}`);
 
           const audioDuration = await getDuration(localAudioPath);
 
@@ -1455,16 +1456,16 @@ app.post("/api/generate-video", upload.fields([
           const publicAudioUrl = `${protocol}://${host}/uploads/${audioFilename}`;
           const publicVideoUrl = `${protocol}://${host}/uploads/${scaledVideoFilename}`;
 
-          // Auto-Splitting Kling Pipeline (only if lipsyncEngine is fal_kling and duration > 60s)
-          if (lipsyncEngine === "fal_kling" && audioDuration > 60) {
-            addJobLog(jobId, `Kling Auto-Splitting enabled. Duration: ${audioDuration}s. Slicing into 60s segments...`);
+          // Auto-Splitting Pipeline — all fal engines have a ~60s per-call limit
+          if (audioDuration > 58) {
+            addJobLog(jobId, `Audio duration ${audioDuration.toFixed(1)}s exceeds 60s limit. Auto-splitting into segments...`);
             
-            const numSegments = Math.ceil(audioDuration / 60);
+            const numSegments = Math.ceil(audioDuration / 58);
             const segmentPromises = [];
 
             for (let i = 0; i < numSegments; i++) {
-              const start = i * 60;
-              const duration = Math.min(60, audioDuration - start);
+              const start = i * 58;
+              const duration = Math.min(58, audioDuration - start);
 
               // Slice audio segment
               const audioSegFilename = `aud_seg_${jobId}_${i}.wav`;
@@ -1472,31 +1473,36 @@ app.post("/api/generate-video", upload.fields([
               await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${localAudioPath}" "${audioSegPath}"`);
               tempFilesToCleanup.push(audioSegPath);
 
-              // Slice video segment (transcoding to ensure correct keyframe alignments!)
+              // Slice video segment (transcoding to ensure correct keyframe alignments)
               const videoSegFilename = `vid_seg_${jobId}_${i}.mp4`;
               const videoSegPath = path.join("public", "uploads", videoSegFilename);
               await execPromise(`ffmpeg -y -ss ${start} -t ${duration} -i "${scaledVideoPath}" -c:v libx264 -pix_fmt yuv420p -c:a aac "${videoSegPath}"`);
               tempFilesToCleanup.push(videoSegPath);
 
-              // Dispatch segment to Fal.ai Kling
+              // Dispatch segment to Fal.ai
               segmentPromises.push((async () => {
                 const publicSegAudioUrl = `${protocol}://${host}/uploads/${audioSegFilename}`;
                 const publicSegVideoUrl = `${protocol}://${host}/uploads/${videoSegFilename}`;
 
-                addJobLog(jobId, `Dispatching Kling segment ${i + 1}/${numSegments} (${duration}s)...`);
-                const queueInfo = await startFalPrediction(
-                  endpointId,
-                  { video_url: publicSegVideoUrl, audio_url: publicSegAudioUrl },
-                  falApiKey
-                );
+                addJobLog(jobId, `Dispatching segment ${i + 1}/${numSegments} (${duration.toFixed(1)}s) to ${endpointId}...`);
 
-                const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
-                const outUrl = result.video ? result.video.url : result.output;
-                if (!outUrl) {
-                  throw new Error(`Kling segment prediction ${i + 1} did not return a valid video URL.`);
+                const segInput = { audio_url: publicSegAudioUrl };
+                if (endpointId.includes("wav2lip")) {
+                  segInput.face_url = publicSegVideoUrl;
+                } else if (endpointId.includes("latentsync")) {
+                  segInput.video_url = publicSegVideoUrl;
+                  segInput.loop_mode = "loop";
+                } else {
+                  segInput.video_url = publicSegVideoUrl;
+                  segInput.sync_mode = "loop";
                 }
 
-                // Download segment locally so we can stitch them
+                const queueInfo = await startFalPrediction(endpointId, segInput, falApiKey);
+                const result = await pollFalPrediction(queueInfo.statusUrl, queueInfo.responseUrl, falApiKey, jobId);
+                const outUrl = result.video ? result.video.url : (result.output_video ? result.output_video.url : result.output);
+                if (!outUrl) throw new Error(`Segment ${i + 1} prediction did not return a valid video URL.`);
+
+                // Download segment locally for stitching
                 const outputSegFilename = `out_seg_${jobId}_${i}.mp4`;
                 const outputSegPath = path.join("public", "uploads", outputSegFilename);
                 await downloadFile(outUrl, outputSegPath);
@@ -1506,11 +1512,11 @@ app.post("/api/generate-video", upload.fields([
               })());
             }
 
-            // Wait for all segments to complete lip-sync rendering
+            // Wait for all segments (run concurrently where possible)
             const completedSegs = await Promise.all(segmentPromises);
 
-            // Stitch segments using ffmpeg complex filter concat
-            addJobLog(jobId, `Stitching ${completedSegs.length} Kling segments together...`);
+            // Stitch segments
+            addJobLog(jobId, `Stitching ${completedSegs.length} segments together...`);
             let ffmpegArgs = [];
             let filterInputs = "";
             for (let i = 0; i < completedSegs.length; i++) {
@@ -1524,10 +1530,10 @@ app.post("/api/generate-video", upload.fields([
             await execPromise(`ffmpeg -y ${ffmpegArgs.join(" ")} -filter_complex ${filterComplex} -map "[v]" -map "[a]" "${finalStitchedPath}"`);
             
             videoUrl = `/uploads/${stitchedFilename}`;
-            addJobLog(jobId, `Kling Auto-Stitching complete. Local URL: ${videoUrl}`);
+            addJobLog(jobId, `Auto-stitch complete. Local URL: ${videoUrl}`);
 
           } else {
-            // Standard single-run prediction for shorter assets or alternative engines
+            // Standard single-run prediction (audio <= 58s)
              addJobLog(jobId, `Running single Fal.ai prediction using model ${endpointId}...`);
              const falInput = { audio_url: publicAudioUrl };
              if (endpointId.includes("wav2lip")) {
