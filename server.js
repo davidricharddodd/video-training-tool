@@ -760,10 +760,10 @@ function generateSceneTitle(sceneText, index) {
 
   if (significantWords.length >= 2) {
     const titleSnippet = significantWords.slice(0, 4).join(" ");
-    return `Scene ${index}: ${toTitleCase(titleSnippet)}`;
+    return toTitleCase(titleSnippet);
   }
 
-  return `Scene ${index}: Training Module Overview`;
+  return `Training Module Overview`;
 }
 
 // Helper: Intelligent Scene Breakdown into targetCount scenes (Algorithmic)
@@ -874,7 +874,7 @@ ${styleGuidance}
 
 For each scene provide:
 - "sceneIndex": integer starting at 1
-- "title": A concise, professional 2-4 word topic title (e.g. "Scene 1: System Isolation Protocol")
+- "title": A concise, professional 2-4 word topic headline (e.g. "System Isolation Protocol", "Opt-Out Eligibility Criteria"). Do NOT include the word "Scene" or scene numbers in the title.
 - "script": The verbatim script portion for this scene
 - "highlights": Exactly 3 to 4 concise executive summary bullet points (each 3 to 6 words). CRITICAL: Do NOT copy verbatim conversational sentences or filler phrases! Strictly adhere to the requested style guidelines.
 
@@ -888,7 +888,7 @@ Respond with ONLY valid JSON:
   "scenes": [
     {
       "sceneIndex": 1,
-      "title": "Scene 1: Safety Overview",
+      "title": "Safety Overview Protocol",
       "script": "...",
       "highlights": ["Takeaway 1", "Takeaway 2", "Takeaway 3"]
     }
@@ -933,12 +933,15 @@ Respond with ONLY valid JSON:
           const parsed = JSON.parse(jsonMatch[0]);
           if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
             console.log(`[AI Scene Breakdown] Successfully generated ${parsed.scenes.length} pedagogical scenes with AI (${activeModel}).`);
-            return parsed.scenes.map((s, idx) => ({
-              sceneIndex: idx + 1,
-              title: s.title || `Scene ${idx + 1}: Training Overview`,
-              script: s.script || "",
-              highlights: Array.isArray(s.highlights) ? s.highlights.slice(0, 4) : []
-            }));
+            return parsed.scenes.map((s, idx) => {
+              const cleanT = (s.title || "Training Overview").replace(/^Scene\s*\d*[\s:\-–—]*/i, "").trim();
+              return {
+                sceneIndex: idx + 1,
+                title: cleanT || "Training Overview",
+                script: s.script || "",
+                highlights: Array.isArray(s.highlights) ? s.highlights.slice(0, 4) : []
+              };
+            });
           }
         }
       } else {
@@ -954,32 +957,74 @@ Respond with ONLY valid JSON:
   return breakdownScriptIntoScenes(rawText, targetCount);
 }
 
+// Word-wrap helper to wrap text cleanly into lines of maxChars length
+function wrapTextToLines(text, maxChars = 42) {
+  if (!text) return [];
+  const words = String(text).trim().split(/\s+/);
+  const lines = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    if (!currentLine) {
+      currentLine = word;
+    } else if ((currentLine + " " + word).length <= maxChars) {
+      currentLine += " " + word;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  return lines;
+}
+
 // Helper to generate a clean, modern SVG slide overlay card with progressive bullet point reveals
 function generateSceneOverlaySvg(highlights, title, sceneIndex, visibleCount = 99, activeIndex = -1) {
-  const rawTitle = title || `Scene ${sceneIndex}`;
-  const cleanTitle = rawTitle.replace(/^Scene \d+:\s*/i, "").trim();
-  const safeTitle = cleanTitle.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rawTitle = title || "";
+  const cleanTitle = rawTitle.replace(/^Scene\s*\d*[\s:\-–—]*/i, "").trim() || "Training Focus";
   
+  // Wrap Title if needed (at ~34 characters for 38px font)
+  const titleLines = wrapTextToLines(cleanTitle, 34);
+  const titleSvg = titleLines.map((line, idx) => {
+    const safeLine = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const yLine = 265 + (idx * 48);
+    return `<text x="80" y="${yLine}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="38" font-weight="bold" fill="#ffffff">${safeLine}</text>`;
+  }).join("\n");
+
+  const underlineY = 275 + ((titleLines.length - 1) * 48);
+  let currentY = underlineY + 55;
+
   const allHighlights = (highlights || []).slice(0, 4);
   const bulletLines = allHighlights.map((h, i) => {
     const isVisible = i < visibleCount;
+    // Word wrap each bullet point at 42 chars for 28px font
+    const lines = wrapTextToLines(h, 42);
+    const startY = currentY;
+    const yDot = startY - 9;
+    const advanceY = (lines.length * 38) + 26;
+    currentY += advanceY;
+
     if (!isVisible) return "";
 
     const isActive = (i === activeIndex || (activeIndex === -1 && i === visibleCount - 1));
-    const yText = 430 + (i * 90);
-    const yDot = yText - 8;
-    const safeH = String(h).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
     const dotColor = isActive ? "#c084fc" : "#8b5cf6";
-    const dotRadius = isActive ? "10" : "7";
+    const dotRadius = isActive ? "9" : "7";
     const textColor = isActive ? "#ffffff" : "#e2e8f0";
     const textWeight = isActive ? "700" : "600";
-    const pulseRing = isActive ? `<circle cx="92" cy="${yDot}" r="15" fill="#c084fc" fill-opacity="0.35" stroke="#d946ef" stroke-width="1.5" />` : "";
+    const pulseRing = isActive ? `<circle cx="92" cy="${yDot}" r="16" fill="#c084fc" fill-opacity="0.35" stroke="#d946ef" stroke-width="1.5" />` : "";
+
+    const textElements = lines.map((line, lIdx) => {
+      const lineY = startY + (lIdx * 38);
+      const safeLine = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `<text x="126" y="${lineY}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="${textWeight}" fill="${textColor}">${safeLine}</text>`;
+    }).join("\n");
 
     return `
     ${pulseRing}
     <circle cx="92" cy="${yDot}" r="${dotRadius}" fill="${dotColor}" />
-    <text x="122" y="${yText}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" font-weight="${textWeight}" fill="${textColor}">${safeH}</text>
+    ${textElements}
     `;
   }).filter(Boolean).join("\n");
 
@@ -997,15 +1042,11 @@ function generateSceneOverlaySvg(highlights, title, sceneIndex, visibleCount = 9
   <!-- Left-Side Slide Card Container Backdrop (Glassmorphic) -->
   <rect x="50" y="190" width="1040" height="660" rx="28" fill="#0b132b" fill-opacity="0.75" stroke="#334155" stroke-width="1.5" filter="url(#cardShadow)"/>
 
-  <!-- Scene Badge -->
-  <rect x="80" y="235" width="125" height="32" rx="8" fill="#7c3aed" fill-opacity="0.35" stroke="#8b5cf6" stroke-width="1.5"/>
-  <text x="142" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="bold" fill="#ddd6fe" text-anchor="middle" letter-spacing="1">SCENE ${sceneIndex}</text>
+  <!-- Topic Title Headline (Larger font, multi-line wrap support) -->
+  ${titleSvg}
+  <rect x="80" y="${underlineY}" width="220" height="5" rx="2.5" fill="url(#titleAccent)"/>
 
-  <!-- Scene Title Headline -->
-  <text x="80" y="325" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="36" font-weight="bold" fill="#ffffff">${safeTitle}</text>
-  <rect x="80" y="348" width="220" height="5" rx="2.5" fill="url(#titleAccent)"/>
-
-  <!-- Progressive On-Screen Key Bullet Highlights -->
+  <!-- Progressive On-Screen Key Bullet Highlights (Larger font, word-wrapped) -->
   ${bulletLines}
 </svg>`;
 }

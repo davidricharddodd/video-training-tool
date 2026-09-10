@@ -393,8 +393,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const newIdx = currentScenes.length + 1;
       currentScenes.push({
         sceneIndex: newIdx,
-        title: `Scene ${newIdx}: Topic & Objectives`,
-        script: `Enter the spoken narrative for Scene ${newIdx} here.`,
+        title: `Topic & Key Objectives ${newIdx}`,
+        script: `Enter the spoken narrative here.`,
         highlights: [
           "Primary objective or action item",
           "Secondary operational guideline"
