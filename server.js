@@ -766,6 +766,102 @@ function generateSceneTitle(sceneText, index) {
   return `Training Module Overview`;
 }
 
+// Helper: Split text into sentences while keeping punctuation (. ! ?)
+function splitIntoSentencesWithPunctuation(text) {
+  if (!text || !text.trim()) return [];
+  const matches = text.match(/[^.!?\n]+(?:[.!?]+(?:\s+|$)|$)/g);
+  if (!matches) return [text.trim()];
+  return matches.map(s => s.trim()).filter(Boolean);
+}
+
+// Helper: Balanced unit partitioning guaranteeing 0 dropped sentences
+function partitionUnitsIntoBalancedScenes(units, targetCount) {
+  if (!units || units.length === 0) return [];
+  const k = Math.min(targetCount, units.length);
+  const chunks = [];
+  const baseSize = Math.floor(units.length / k);
+  const remainder = units.length % k;
+  let cursor = 0;
+
+  for (let i = 0; i < k; i++) {
+    const size = baseSize + (i < remainder ? 1 : 0);
+    chunks.push(units.slice(cursor, cursor + size));
+    cursor += size;
+  }
+
+  if (cursor < units.length && chunks.length > 0) {
+    chunks[chunks.length - 1].push(...units.slice(cursor));
+  }
+
+  return chunks;
+}
+
+// Helper: Reconcile any missing trailing text or concluding sentences dropped by AI/chunker
+function reconcileMissingTrailingText(originalText, scenes, targetCount = 6) {
+  if (!scenes || scenes.length === 0 || !originalText) return scenes;
+  const cleanOriginal = originalText.trim();
+  const lastScene = scenes[scenes.length - 1];
+  if (!lastScene) return scenes;
+
+  const normOrig = cleanOriginal.replace(/\s+/g, " ");
+  const allScript = scenes.map(s => (s.script || "").trim()).join(" ").replace(/\s+/g, " ");
+
+  const tailLen = Math.min(60, normOrig.length);
+  const origTail = normOrig.slice(-tailLen).trim();
+
+  // If the normalized combined scenes text does not end with the tail of the original text
+  if (!allScript.includes(origTail)) {
+    let trailing = "";
+    const sceneWords = (lastScene.script || "").trim().split(/\s+/);
+    
+    // Search backward from 8 words down to 2 words to find the exact anchor in original text
+    for (let wCount = Math.min(8, sceneWords.length); wCount >= 2; wCount--) {
+      const anchor = sceneWords.slice(-wCount).join(" ");
+      const foundIdx = normOrig.lastIndexOf(anchor);
+      if (foundIdx !== -1) {
+        trailing = normOrig.slice(foundIdx + anchor.length).trim();
+        break;
+      }
+    }
+
+    // Fallback: check word difference if anchor not found
+    if (!trailing) {
+      const origWords = normOrig.split(/\s+/);
+      const combinedWords = allScript.split(/\s+/);
+      if (origWords.length > combinedWords.length) {
+        trailing = origWords.slice(combinedWords.length).join(" ").trim();
+      }
+    }
+
+    if (trailing) {
+      console.log(`[Scene Breakdown] Reconciled dropped trailing text (${trailing.split(/\s+/).length} words): "${trailing.substring(0, 60)}..."`);
+      // If the AI generated fewer scenes than requested and trailing text is long enough for a separate scene
+      if (scenes.length < targetCount && trailing.split(/\s+/).length >= 12) {
+        const newIdx = scenes.length + 1;
+        const newTitle = generateSceneTitle(trailing, newIdx);
+        const newHighlights = extractHighlightsFromText(trailing);
+        scenes.push({
+          sceneIndex: newIdx,
+          title: newTitle,
+          script: trailing,
+          highlights: newHighlights.slice(0, 4)
+        });
+      } else {
+        lastScene.script = `${lastScene.script.trim()} ${trailing}`;
+        // Enrich highlights if last scene had few highlights
+        const extraHighlights = extractHighlightsFromText(trailing);
+        for (const h of extraHighlights) {
+          if (lastScene.highlights.length < 4 && !lastScene.highlights.includes(h)) {
+            lastScene.highlights.push(h);
+          }
+        }
+      }
+    }
+  }
+
+  return scenes;
+}
+
 // Helper: Intelligent Scene Breakdown into targetCount scenes (Algorithmic)
 function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   if (!rawText || !rawText.trim()) return [];
@@ -774,57 +870,21 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
   let units = [];
   const paragraphs = cleanText.split(/\n+/).map(p => p.trim()).filter(Boolean);
 
-  // If script already has clean paragraphs, use them as scene boundaries
+  // If script already has clean paragraphs matching target scene count, use them
   if (paragraphs.length >= targetCount && paragraphs.length <= targetCount + 2) {
     units = paragraphs;
   } else {
     for (const para of paragraphs) {
-      const sents = para.split(/[\.\!\?]+/).map(s => s.trim()).filter(Boolean);
+      const sents = splitIntoSentencesWithPunctuation(para);
       for (const s of sents) {
         if (s.trim()) units.push(s.trim());
       }
     }
   }
 
-  // If units < targetCount, split long units at clause boundaries to reach targetCount
-  while (units.length < targetCount) {
-    let longestIdx = -1;
-    let maxLen = 0;
-    for (let i = 0; i < units.length; i++) {
-      if (units[i].length > maxLen) {
-        maxLen = units[i].length;
-        longestIdx = i;
-      }
-    }
-    if (longestIdx === -1 || maxLen < 35) break;
+  const sceneChunks = partitionUnitsIntoBalancedScenes(units, targetCount);
 
-    const targetUnit = units[longestIdx];
-    const splitMatch = targetUnit.split(/[,;—–]\s+/);
-    if (splitMatch.length > 1) {
-      const mid = Math.floor(splitMatch.length / 2);
-      const part1 = splitMatch.slice(0, mid).join(" ");
-      const part2 = splitMatch.slice(mid).join(" ");
-      units.splice(longestIdx, 1, part1, part2);
-    } else {
-      break;
-    }
-  }
-
-  let sceneChunks = [];
-  if (units.length <= targetCount) {
-    sceneChunks = units.map(u => [u]);
-  } else {
-    const unitsPerScene = Math.ceil(units.length / targetCount);
-    for (let i = 0; i < targetCount; i++) {
-      const start = i * unitsPerScene;
-      const chunk = units.slice(start, start + unitsPerScene);
-      if (chunk.length > 0) {
-        sceneChunks.push(chunk);
-      }
-    }
-  }
-
-  return sceneChunks.map((chunkSentences, index) => {
+  const rawScenes = sceneChunks.map((chunkSentences, index) => {
     const sceneText = chunkSentences.join(" ");
     const highlights = extractHighlightsFromText(sceneText);
     const title = generateSceneTitle(sceneText, index + 1);
@@ -836,6 +896,8 @@ function breakdownScriptIntoScenes(rawText, targetCount = 6) {
       highlights: highlights
     };
   });
+
+  return reconcileMissingTrailingText(rawText, rawScenes, targetCount);
 }
 
 // AI-Powered Scene Breakdown calling Fal.ai any-llm (Claude 3.5 Sonnet, GPT-4o, GPT-4o-mini, Gemini)
@@ -872,10 +934,16 @@ async function breakdownScriptIntoScenesWithAI(rawText, targetCount = 6, customF
 
 ${styleGuidance}
 
+CRITICAL VERBATIM COMPLETENESS MANDATE:
+- You MUST allocate 100% of the provided script text across the ${targetCount} scenes.
+- Every single sentence from the very first word to the very last word of the input script MUST appear verbatim in the "script" fields.
+- Under NO circumstances should you omit, truncate, summarize, or cut off any sentences, especially concluding remarks, warnings, or final calls-to-action.
+- The final scene ("sceneIndex": ${targetCount}) MUST conclude with the exact final sentence of the provided script.
+
 For each scene provide:
 - "sceneIndex": integer starting at 1
 - "title": A concise, professional 2-4 word topic headline (e.g. "System Isolation Protocol", "Opt-Out Eligibility Criteria"). Do NOT include the word "Scene" or scene numbers in the title.
-- "script": The verbatim script portion for this scene
+- "script": The verbatim script portion for this scene (do NOT summarize)
 - "highlights": Exactly 3 to 4 concise executive summary bullet points (each 3 to 6 words). CRITICAL: Do NOT copy verbatim conversational sentences or filler phrases! Strictly adhere to the requested style guidelines.
 
 Script:
@@ -904,7 +972,8 @@ Respond with ONLY valid JSON:
         body: JSON.stringify({
           prompt: userPrompt,
           system_prompt: systemPrompt,
-          model: activeModel
+          model: activeModel,
+          max_tokens: 8192
         })
       });
 
@@ -920,7 +989,8 @@ Respond with ONLY valid JSON:
           body: JSON.stringify({
             prompt: userPrompt,
             system_prompt: systemPrompt,
-            model: "openai/gpt-4o-mini"
+            model: "openai/gpt-4o-mini",
+            max_tokens: 8192
           })
         });
       }
@@ -933,7 +1003,7 @@ Respond with ONLY valid JSON:
           const parsed = JSON.parse(jsonMatch[0]);
           if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
             console.log(`[AI Scene Breakdown] Successfully generated ${parsed.scenes.length} pedagogical scenes with AI (${activeModel}).`);
-            return parsed.scenes.map((s, idx) => {
+            const mappedScenes = parsed.scenes.map((s, idx) => {
               const cleanT = (s.title || "Training Overview").replace(/^Scene\s*\d*[\s:\-–—]*/i, "").trim();
               return {
                 sceneIndex: idx + 1,
@@ -942,6 +1012,7 @@ Respond with ONLY valid JSON:
                 highlights: Array.isArray(s.highlights) ? s.highlights.slice(0, 4) : []
               };
             });
+            return reconcileMissingTrailingText(rawText, mappedScenes, targetCount);
           }
         }
       } else {
